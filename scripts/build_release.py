@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 from tui import __version__
 
 SOURCE_ROOT_FILES = ("README.md", "pyproject.toml", "setup.py", "MANIFEST.in", ".gitignore")
+SOURCE_ASSET_FILES = ("assets/taskman.png", "assets/taskman.ico")
 SOURCE_PATTERNS = {
     "tui": ("*.py", "requirements.txt"),
     "scripts": ("*.py", "*.ps1", "*.cmd", "*.sh"),
@@ -27,6 +28,8 @@ SOURCE_PATTERNS = {
 def source_files(root: Path = ROOT) -> list[Path]:
     """No recursion through arbitrary folders: personal notes never qualify."""
     files = [root / name for name in SOURCE_ROOT_FILES if (root / name).is_file()]
+    files.extend(root / name for name in SOURCE_ASSET_FILES
+                 if (root / name).is_file() and not (root / name).is_symlink())
     for folder, patterns in SOURCE_PATTERNS.items():
         for pattern in patterns:
             files.extend(p for p in (root / folder).glob(pattern)
@@ -50,13 +53,17 @@ def standalone(output: Path) -> Path:
     # onedir avoids unpacking the Python runtime on every launch and makes the
     # application folder portable. There is no external Python dependency.
     build_root = ROOT / "build" / "standalone"
+    icon_args = ("--icon", str(ROOT / "assets" / "taskman.ico")) if os.name == "nt" else ()
     run(sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir",
-        "--console", "--name", "taskman", "--paths", str(ROOT),
+        "--console", "--name", "taskman", "--paths", str(ROOT), *icon_args,
         "--collect-all", "textual", "--collect-all", "rich",
         "--distpath", str(build_root / "dist"), "--workpath", str(build_root / "work"),
         "--specpath", str(build_root), str(ROOT / "scripts" / "frozen_entry.py"))
     bundle = build_root / "dist" / "taskman"
     shutil.copy2(ROOT / "README.md", bundle / "README.md")
+    for name in SOURCE_ASSET_FILES:
+        source = ROOT / name
+        shutil.copy2(source, bundle / source.name)
     if os.name == "nt":
         (bundle / "Taskman.cmd").write_text(
             '@echo off\r\n"%~dp0taskman.exe" %*\r\nset "taskmanExit=%errorlevel%"\r\n'

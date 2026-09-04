@@ -1,14 +1,18 @@
+<img src="assets/taskman.png" width="96" height="96" alt="Taskman icon">
+
 # Taskman
 
 A keyboard-first task manager for folders of Markdown files. Open a folder, capture your tasks, and keep your work readable in any text editor. No account or server is required.
 
 ## Download and run
 
-**Windows:** download the `taskman-2.4.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
+**Windows:** download the `taskman-2.4.1-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
 ```
+
+The Windows executable includes the Taskman icon. The download also includes `taskman.ico` and `taskman.png` for shortcuts and terminal profiles.
 
 The download includes Python and its dependencies. Keep the `_internal` folder beside `taskman.exe`. You can also double-click `Taskman.cmd`; it keeps errors visible if startup fails.
 
@@ -24,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-2.4.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-2.4.1-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 

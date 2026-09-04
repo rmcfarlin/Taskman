@@ -24,7 +24,7 @@ def call(command: list[str], cwd: Path, env: dict[str, str]) -> str:
 def exercise(command: list[str], work: Path, env: dict[str, str]) -> None:
     folder = work / "My tasks \u00e9 \u65e5\u672c"
     folder.mkdir(parents=True, exist_ok=True)
-    assert "2.4.0" in call([*command, "--version"], work, env)
+    assert "2.4.1" in call([*command, "--version"], work, env)
     assert "--vault" in call([*command, "--help"], work, env)
     call([*command, "--init", str(folder)], work, env)
     call([*command, "--vault", str(folder), "--add", "Distribution smoke task"], work, env)
