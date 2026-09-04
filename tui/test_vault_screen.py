@@ -214,7 +214,8 @@ def test_recent_folders_are_keyboard_accessible(tmp_path, monkeypatch):
             await pilot.pause(0.1)
             listing = app.picker.query_one("#vault-folders", OptionList)
             assert listing.has_focus
-            assert "Recent Ω [bold]" in rendered(listing)
+            # Long runner paths may wrap the literal folder name over rows.
+            assert "Recent Ω [bold]" in " ".join(rendered(listing).split())
             await pilot.press("enter")
             await settled(app, pilot)
             assert app.picker._folder == recent
