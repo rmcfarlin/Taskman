@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taskman-vault"
+dynamic = ["version"]
+description = "A keyboard-first task manager for your Markdown folders"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["textual>=8.2.8,<9", "rich>=14.2,<16"]
+keywords = ["tasks", "markdown", "terminal", "tui", "productivity"]
+classifiers = [
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Office/Business :: Scheduling",
+]
+
+[project.scripts]
+taskman = "tui.__main__:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2"]
+build = ["build>=1.2,<2", "pyinstaller>=6.15,<7"]
+
+[tool.setuptools]
+packages = ["tui"]
+include-package-data = false
+
+[tool.setuptools.dynamic]
+version = {attr = "tui.__version__"}

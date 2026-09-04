@@ -1,0 +1,73 @@
+name: Test and package
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: python -m pip install -e ".[test,build]"
+      - name: Verify tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: python
+        run: |
+          import os
+          from tui import __version__
+          assert os.environ['GITHUB_REF_NAME'] == f'v{__version__}'
+      - run: python -m pytest tui -q -p no:cacheprovider
+      - run: python scripts/build_release.py --standalone
+      - run: python scripts/smoke_distribution.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: taskman-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: downloads
+      - name: Collect release files and checksums
+        shell: python
+        run: |
+          import hashlib
+          from pathlib import Path
+          import shutil
+          output = Path('release')
+          output.mkdir()
+          for path in Path('downloads').rglob('*'):
+              if path.is_file() and path.name != 'SHA256SUMS.txt':
+                  destination = output / path.name
+                  if not destination.exists():
+                      shutil.copy2(path, destination)
+          lines = [f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in sorted(output.iterdir())]
+          (output / 'SHA256SUMS.txt').write_text(''.join(lines), encoding='utf-8')
+      - name: Publish verified downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "Taskman $RELEASE_TAG"
