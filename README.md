@@ -6,7 +6,7 @@ A keyboard-first task manager for folders of Markdown files. Open a folder, capt
 
 ## Download and run
 
-**Windows:** download the `taskman-2.4.1-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
+**Windows:** download the `taskman-2.4.2-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-2.4.1-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-2.4.2-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -118,3 +118,11 @@ If startup fails, run the command in an existing terminal or use `Taskman.cmd` t
 To upgrade the standalone app, extract the new download into a new application folder and launch it. To remove it, delete that application folder. Neither action removes your vaults. Source installations can be removed by deleting the installer-created environment folder; uv and pipx installations can be removed with their respective `tool uninstall taskman-vault` / `uninstall taskman-vault` commands.
 
 See [development and release checks](docs/DEVELOPMENT.md) to build the app and verify a release.
+
+## Contributing and security
+
+See the [contribution guide](https://github.com/rmcfarlin/Taskman/blob/main/CONTRIBUTING.md) for bug reports, feature proposals, development setup, and pull requests. Report vulnerabilities privately using the [security policy](SECURITY.md).
+
+## License
+
+Taskman is licensed under the [MIT License](LICENSE). Third-party dependencies retain their own licenses.

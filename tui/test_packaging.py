@@ -21,7 +21,8 @@ def _builder():
 
 def test_source_allowlist_rejects_personal_vault_and_build_outputs(tmp_path):
     builder = _builder()
-    files = ["README.md", "pyproject.toml", "tui/app.py", "tui/test_app.py",
+    files = ["README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
+             "pyproject.toml", "tui/app.py", "tui/test_app.py",
              "scripts/install.ps1", "docs/DEVELOPMENT.md", ".github/workflows/release.yml",
              "Tasks/Inbox.md", "Projects/Private.md", "Notes/secrets.md", "tui/theme.txt",
              "tui/logs/error.log", "artifacts/private.txt", ".env", "build/token.py",
@@ -32,7 +33,8 @@ def test_source_allowlist_rejects_personal_vault_and_build_outputs(tmp_path):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text("do not leak", encoding="utf-8")
     allowed = {p.relative_to(tmp_path).as_posix() for p in builder.source_files(tmp_path)}
-    assert allowed == {"README.md", "pyproject.toml", "tui/app.py", "tui/test_app.py",
+    assert allowed == {"README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
+                       "pyproject.toml", "tui/app.py", "tui/test_app.py",
                        "scripts/install.ps1", "docs/DEVELOPMENT.md", ".github/workflows/release.yml",
                        "assets/taskman.png", "assets/taskman.ico"}
 
@@ -42,6 +44,8 @@ def test_source_archive_contents_exactly_match_allowlist(tmp_path, monkeypatch):
     archive_path = builder.source_zip(tmp_path)
     with zipfile.ZipFile(archive_path) as archive:
         members = archive.namelist()
+        for name in ("LICENSE", "CONTRIBUTING.md", "SECURITY.md"):
+            assert archive.read(f"taskman-{builder.__version__}/{name}") == (ROOT / name).read_bytes()
     prefix = f"taskman-{builder.__version__}/"
     assert set(members) == {prefix + p.relative_to(ROOT).as_posix() for p in builder.source_files()}
     assert all(".." not in Path(name).parts for name in members)
@@ -59,7 +63,8 @@ def test_runtime_build_includes_required_modules_and_excludes_tests():
     assert all((ROOT / "tui" / f"{module}.py").is_file() for module in runtime)
 
 
-@pytest.mark.parametrize("system,os_name", [("Windows", "nt"), ("Linux", "posix")])
+@pytest.mark.parametrize("system,os_name", [("Windows", "nt"), ("Linux", "posix"),
+                                          ("Darwin", "posix")])
 def test_standalone_packages_artwork_and_embeds_icon_only_on_windows(tmp_path, monkeypatch,
                                                                   system, os_name):
     builder = _builder()
@@ -68,6 +73,8 @@ def test_standalone_packages_artwork_and_embeds_icon_only_on_windows(tmp_path, m
     monkeypatch.setattr(builder.platform, "system", lambda: system)
     monkeypatch.setattr(builder.platform, "machine", lambda: "AMD64")
     (tmp_path / "README.md").write_text("Taskman", encoding="utf-8")
+    for name in ("LICENSE", "SECURITY.md"):
+        (tmp_path / name).write_text("distribution document: " + name, encoding="utf-8")
     (tmp_path / "assets").mkdir()
     for name in ("taskman.png", "taskman.ico"):
         (tmp_path / "assets" / name).write_bytes(b"artwork:" + name.encode())
@@ -90,5 +97,7 @@ def test_standalone_packages_artwork_and_embeds_icon_only_on_windows(tmp_path, m
     else:
         assert "--icon" not in commands[0]
     with zipfile.ZipFile(archive_path) as archive:
+        for name in ("LICENSE", "SECURITY.md"):
+            assert archive.read(f"taskman/{name}") == (tmp_path / name).read_bytes()
         for name in ("taskman.png", "taskman.ico"):
             assert archive.read(f"taskman/{name}") == (tmp_path / "assets" / name).read_bytes()

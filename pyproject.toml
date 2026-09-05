@@ -7,6 +7,8 @@ name = "taskman-vault"
 dynamic = ["version"]
 description = "A keyboard-first task manager for your Markdown folders"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["textual>=8.2.8,<9", "rich>=14.2,<16"]
 keywords = ["tasks", "markdown", "terminal", "tui", "productivity"]
@@ -16,6 +18,11 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Topic :: Office/Business :: Scheduling",
 ]
+
+[project.urls]
+Repository = "https://github.com/rmcfarlin/Taskman"
+Issues = "https://github.com/rmcfarlin/Taskman/issues"
+Changelog = "https://github.com/rmcfarlin/Taskman/releases"
 
 [project.scripts]
 taskman = "tui.__main__:main"

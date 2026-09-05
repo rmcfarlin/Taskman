@@ -1,4 +1,4 @@
-include README.md pyproject.toml setup.py MANIFEST.in .gitignore
+include README.md LICENSE CONTRIBUTING.md SECURITY.md pyproject.toml setup.py MANIFEST.in .gitignore
 include assets/taskman.png assets/taskman.ico
 recursive-include tui *.py requirements.txt
 recursive-include scripts *.py *.ps1 *.cmd *.sh

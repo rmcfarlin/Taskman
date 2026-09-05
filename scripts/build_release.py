@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tui import __version__
 
-SOURCE_ROOT_FILES = ("README.md", "pyproject.toml", "setup.py", "MANIFEST.in", ".gitignore")
+SOURCE_ROOT_FILES = ("README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
+                     "pyproject.toml", "setup.py", "MANIFEST.in", ".gitignore")
 SOURCE_ASSET_FILES = ("assets/taskman.png", "assets/taskman.ico")
 SOURCE_PATTERNS = {
     "tui": ("*.py", "requirements.txt"),
@@ -60,7 +61,8 @@ def standalone(output: Path) -> Path:
         "--distpath", str(build_root / "dist"), "--workpath", str(build_root / "work"),
         "--specpath", str(build_root), str(ROOT / "scripts" / "frozen_entry.py"))
     bundle = build_root / "dist" / "taskman"
-    shutil.copy2(ROOT / "README.md", bundle / "README.md")
+    for name in ("README.md", "LICENSE", "SECURITY.md"):
+        shutil.copy2(ROOT / name, bundle / name)
     for name in SOURCE_ASSET_FILES:
         source = ROOT / name
         shutil.copy2(source, bundle / source.name)
