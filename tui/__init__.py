@@ -15,4 +15,4 @@ Files:
                  local autosave and a keyboard-accessible vault chooser
 """
 
-__version__ = "2.4.3"
+__version__ = "2.5.0"

@@ -42,6 +42,7 @@ import os
 import re
 import sys
 import tempfile
+import uuid
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -102,6 +103,8 @@ DUE_RE, START_RE, SCHED_RE, DONE_RE, CANCEL_RE = (
 DATE_RES = (DUE_RE, START_RE, SCHED_RE, DONE_RE, CANCEL_RE)
 
 TAG_RE = re.compile(r"(?<![\w/])#([\w\-./]+)")
+TASK_ANCHOR_RE = re.compile(r"<!-- taskman:id=([0-9a-f]{32}) -->")
+TASK_ANCHOR_VALUE_RE = re.compile(r"[0-9a-f]{32}")
 
 # Folders never scanned (plugin code, history, templates with placeholder boxes).
 EXCLUDE_DIRS = {
@@ -158,6 +161,7 @@ class Task:
     note_end: int = 0         # lineno of the note's last line; 0 = no note lines
     context: bool = False     # transient: True when shown only as a matched
                               # task's ancestor (set by view_tasks, never saved)
+    anchor: str = ""          # durable identity, added only when explicitly linking
 
     # -- derived ------------------------------------------------------------
     @property
@@ -261,6 +265,12 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
     if not m:
         return None
     indent, status, body = m.group(1), m.group(2), m.group(3).strip()
+    anchors = set(TASK_ANCHOR_RE.findall(body))
+    # Conflicting markers are ambiguous: leave them visible and untouched rather
+    # than choosing one identity. Linking rejects this case before writing.
+    anchor = next(iter(anchors)) if len(anchors) == 1 else ""
+    if anchor:
+        body = TASK_ANCHOR_RE.sub(" ", body)
     bullet = "-"  # normalized on write; original marker is not significant
     stripped = line.lstrip()
     if stripped[:2] in ("* ", "+ ") or (stripped and stripped[0].isdigit()):
@@ -285,6 +295,7 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
         indent=indent,
         bullet=bullet,
         raw=line.rstrip("\n"),
+        anchor=anchor,
     )
     # Description = body minus priority emoji, date tokens, tags.
     desc = body
@@ -295,6 +306,26 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
     desc = TAG_RE.sub(" ", desc)
     task.description = re.sub(r"\s+", " ", desc).strip()
     return task
+
+
+def find_task_by_anchor(tasks: Iterable[Task], anchor: str) -> "Task | None":
+    """Resolve a valid anchor, or None if missing; duplicates raise ValueError.
+
+    An empty/invalid anchor never matches unanchored tasks. A line containing
+    conflicting markers has no usable anchor and must be repaired explicitly.
+    """
+    if not TASK_ANCHOR_VALUE_RE.fullmatch(anchor):
+        return None
+    matches = []
+    for task in tasks:
+        raw_anchors = set(TASK_ANCHOR_RE.findall(task.raw))
+        if task.anchor == anchor or anchor in raw_anchors:
+            if len(raw_anchors | ({task.anchor} if task.anchor else set())) > 1:
+                raise ValueError(f"Conflicting task anchors include: {anchor}")
+            matches.append(task)
+    if len(matches) > 1:
+        raise ValueError(f"Duplicate task anchor: {anchor}")
+    return matches[0] if matches else None
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +371,7 @@ def iter_markdown_files(root: "str | Path") -> list[Path]:
 
 
 def parse_file(path: "str | Path", root: "str | Path") -> list[Task]:
-    """Parse every checkbox in one file. Never raises on bad encoding."""
+    """Parse body checkboxes, excluding metadata/comments/code; keep line numbers."""
     root = Path(root)
     path = Path(path)
     try:
@@ -356,6 +387,8 @@ def parse_file(path: "str | Path", root: "str | Path") -> list[Task]:
             return []
     tasks: list[Task] = []
     in_fence = False  # skip ```code blocks``` — docs show example checkboxes
+    frontmatter = ""
+    in_comment = False
     # Indent stack for hierarchy: (indent_width, lineno). A task nests under
     # the nearest previous task with a *smaller* indent, whatever indent
     # width the file uses (2 spaces, 4 spaces, tabs all work).
@@ -377,13 +410,28 @@ def parse_file(path: "str | Path", root: "str | Path") -> list[Task]:
 
     for i, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
+        if i == 1:
+            stripped = stripped.lstrip("\ufeff")
+        if i == 1 and stripped in ("---", "+++"):
+            frontmatter = stripped
+            continue
+        if frontmatter:
+            if stripped == frontmatter or (frontmatter == "---" and stripped == "..."):
+                frontmatter = ""
+            continue
+        if not in_comment and (stripped.startswith("```") or stripped.startswith("~~~")):
             flush()
             in_fence = not in_fence
             continue
         if in_fence:
             continue
-        t = parse_task_line(line, file=rel, lineno=i)
+        # Standalone HTML comments may contain arbitrary text, including invalid
+        # note metadata and checkbox examples. Keep inline task anchors intact.
+        comment_line = in_comment or stripped.startswith("<!--")
+        if comment_line:
+            for marker in re.finditer(r"<!--|-->", line):
+                in_comment = marker.group() == "<!--"
+        t = None if comment_line else parse_task_line(line, file=rel, lineno=i)
         if t is not None:
             flush()
             width = len(t.indent.expandtabs(4))
@@ -849,6 +897,11 @@ def build_line(t: Task) -> str:
     for tag in t.tags:
         tokens.append(f"#{tag}")
     body = t.description
+    if t.anchor:
+        if not TASK_ANCHOR_VALUE_RE.fullmatch(t.anchor):
+            raise ValueError("Task anchor must be 32 lowercase hexadecimal characters")
+        body = re.sub(r"\s+", " ", TASK_ANCHOR_RE.sub(" ", body)).strip()
+        tokens.append(f"<!-- taskman:id={t.anchor} -->")
     if tokens:
         body = f"{body} {' '.join(tokens)}" if body else " ".join(tokens)
     return f"{t.indent}{t.bullet} [{t.status}] {body}".rstrip()
@@ -889,6 +942,55 @@ def _rewrite_lines(root: Path, rel: str, changes: dict[int, str]) -> None:
 def _rewrite_line(root: Path, t: Task, new_line: str) -> None:
     """Replace one 1-based line atomically (temp file + rename)."""
     _rewrite_lines(root, t.file, {t.lineno: new_line})
+
+
+def ensure_task_anchor(vault: Path, task: Task) -> Task:
+    """Return a freshly parsed task with a durable anchor, adding one lazily.
+
+    The supplied location and raw line must still match the file. Newly added
+    tasks have no raw line, so their canonical line is checked instead. Stale
+    tasks and ambiguous anchors raise ValueError without writing. Existing
+    anchors are reused; ordinary reads and task creation never generate one.
+    """
+    root = Path(vault)
+    path = vault_path(root, task.file)
+    original = path.read_bytes()
+    text = original.decode("utf-8")
+    lines = text.splitlines(keepends=True)
+    current = next((item for item in parse_file(path, root)
+                    if item.lineno == task.lineno), None)
+    expected_line = task.raw or build_line(task)
+    if (current is None or not 1 <= task.lineno <= len(lines)
+            or current.raw != expected_line
+            or lines[task.lineno - 1].rstrip("\r\n") != expected_line
+            or (task.anchor and task.anchor != current.anchor)):
+        raise ValueError("Task changed before linking; refresh and try again")
+    if len(set(TASK_ANCHOR_RE.findall(current.raw))) > 1:
+        raise ValueError("Task has conflicting anchors; repair them before linking")
+    tasks = load_all(root)
+    if current.anchor:
+        find_task_by_anchor(tasks, current.anchor)  # Reject ambiguous copied IDs.
+        if path.read_bytes() != original:
+            raise ValueError("Task file changed before linking; refresh and try again")
+        return current
+    used = {item.anchor for item in tasks if item.anchor}
+    anchor = uuid.uuid4().hex
+    while anchor in used:
+        anchor = uuid.uuid4().hex
+    raw = lines[task.lineno - 1]
+    body = raw.rstrip("\r\n")
+    ending = raw[len(body):]
+    separator = "" if body and body[-1].isspace() else " "
+    lines[task.lineno - 1] = f"{body}{separator}<!-- taskman:id={anchor} -->{ending}"
+    if path.read_bytes() != original:
+        raise ValueError("Task file changed before linking; refresh and try again")
+    # Use the existing atomic replacement while preserving every original line
+    # ending, trailing newline, bullet, space, and unrelated byte in the file.
+    _write_lines_atomic(path, ["".join(lines)], "", trailing_nl=False)
+    result = find_task_by_anchor(parse_file(path, root), anchor)
+    if result is None or result.lineno != task.lineno:
+        raise ValueError("Task changed after linking; refresh and try again")
+    return result
 
 
 def toggle(root: "str | Path", t: Task, day: "dt.date | None" = None,
@@ -960,6 +1062,8 @@ def set_priority(root: "str | Path", t: Task, level: int) -> Task:
 
 
 def edit_text(root: "str | Path", t: Task, description: str) -> Task:
+    if t.anchor:
+        description = TASK_ANCHOR_RE.sub(" ", description)
     t.description = re.sub(r"\s+", " ", description).strip()
     _rewrite_line(Path(root), t, build_line(t))
     return t
@@ -1089,7 +1193,7 @@ def add_task(root: "str | Path", text: str, project: str = "",
 
     t = Task(file=rel, lineno=len(lines) + 1, status=" ", description=desc,
              priority=prio, due=due, start=extras["start"],
-             scheduled=extras["scheduled"], tags=tuple(tags))
+             scheduled=extras["scheduled"], tags=tuple(tags), anchor=probe.anchor)
     line = build_line(t)
 
     # Project notes: join the list under "## Tasks" (right after the last
@@ -1137,6 +1241,7 @@ def add_subtask(root: "str | Path", parent: Task, text: str,
         start=probe.start, scheduled=probe.scheduled,
         tags=tuple(probe.tags), indent=indent, depth=cur.depth + 1,
         parent_lineno=cur.lineno,
+        anchor=probe.anchor,
     )
     path = vault_path(root, parent.file)
     lines, nl = _read_lines(path)

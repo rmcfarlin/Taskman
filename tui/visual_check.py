@@ -2,16 +2,20 @@
 
 Run from the vault root: .venv/Scripts/python -m tui.visual_check
 SVG files go to artifacts/visual. All sample data is isolated in a temp folder.
+Use --notes-only --output artifacts/visual-notes for the reference library.
 """
 from __future__ import annotations
 
 import asyncio
+import argparse
 import datetime as dt
 import os
 import tempfile
 from pathlib import Path
 
 from tui.app import TaskApp
+from tui.notes import NotesStore, TaskLink
+from tui import taskman as tm
 from textual.widgets import Input
 
 
@@ -26,11 +30,51 @@ async def capture(root: Path, output: Path, name: str, size: tuple[int, int],
         (output / f"{name}.svg").write_text(app.export_screenshot(title="Taskman"), encoding="utf-8")
 
 
-async def main() -> None:
+def seed_notes(root: Path) -> None:
+    """Representative reference material, with a real stable task link."""
+    tasks = tm.Store(root).refresh()
+    linked = tm.ensure_task_anchor(root, next(
+        task for task in tasks if task.description == "Document the approval workflow"))
+    notes = NotesStore(root)
+    notes.create(
+        title="Approval workflow", category="Processes", tags=("purchasing", "reference"),
+        projects=("Operations",), tasks=(TaskLink(linked.anchor, linked.description),),
+        body="## Before approving\n\n"
+             "1. Confirm the request includes the supplier quote.\n"
+             "2. Check the owner and the expected delivery date.\n"
+             "3. Record the decision where the team can retrieve it.\n\n"
+             "## Reference\n\n"
+             "**Owner:** Operations\n\n"
+             "This procedure remains available after the related task is complete.\n\n"
+             "> Capture reusable decisions here; keep the next action in a task.\n",
+    )
+    notes.create(
+        title="Daily refresh runbook", category="Systems", tags=("automation", "runbook"),
+        projects=("Automation",),
+        body="## When a refresh fails\n\n"
+             "Review the exception report and compare its source timestamp.\n\n"
+             "Record the failure time, affected report, and recovery steps.\n",
+    )
+    notes.create(
+        title="Month-end reconciliation reference", category="Finance", tags=("close", "reference"),
+        body="## Review questions\n\n"
+             "- Does the support agree to the ledger?\n"
+             "- Are reconciling items assigned to an owner?\n"
+             "- Is the explanation clear enough to retrieve next month?\n",
+    )
+    notes.create(
+        title="Supplier meeting — follow-up", category="Meetings", tags=("supplier",),
+        projects=("Operations",),
+        body="The supplier confirmed a new delivery window.\n\n"
+             "Keep the revised quote and the decision together for the next review.\n",
+    )
+
+
+async def main(*, notes_only: bool = False, output: Path | None = None) -> None:
     os.environ.pop("NO_COLOR", None)
     os.environ.pop("TASKMAN_THEME", None)
     vault = Path(__file__).resolve().parent.parent
-    output = vault / "artifacts" / "visual"
+    output = output or vault / "artifacts" / "visual"
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="visual-", dir=output.parent) as tmp:
         root = Path(tmp)
@@ -57,6 +101,20 @@ async def main() -> None:
                           "- [ ] Document the approval workflow\n",
         }.items():
             (root / "Projects" / f"{name}.md").write_text(f"# {name}\n\n## Tasks\n{content}", encoding="utf-8")
+        seed_notes(root)
+        note_scenarios = [
+            ("notes-wide", (140, 38), ("8",)),
+            ("notes-linked-preview", (140, 38), ("8", "right")),
+            ("notes-compact", (80, 24), ("8",)),
+            ("notes-editor", (120, 36), ("8", "enter")),
+            ("notes-editor-small", (60, 20), ("8", "enter")),
+            ("notes-capture-small", (60, 20), ("8", "a")),
+            ("notes-find", (140, 38), ("8", "/", "s", "u", "p", "p", "l", "i", "e", "r", "enter")),
+        ]
+        for name, size, keys in note_scenarios:
+            await capture(root, output, name, size, keys)
+        await capture(root, output, "notes-light", (100, 28), ("8",), theme="catppuccin-latte")
+        await capture(root, output, "notes-contrast", (100, 28), ("8",), theme="high-contrast")
         scenarios = [
             ("overview-wide", (140, 38), ()),
             ("find-open", (140, 38), ("/",)),
@@ -73,12 +131,13 @@ async def main() -> None:
             ("note-compact", (60, 20), ("n",)),
             ("open-vault", (120, 32), ("ctrl+o",)),
         ]
-        for name, size, keys in scenarios:
-            await capture(root, output, name, size, keys)
-        await capture(root, output, "overview-light", (100, 28), theme="catppuccin-latte")
-        await capture(root, output, "overview-contrast", (80, 24), theme="high-contrast")
-        await capture(root, output, "notification-compact", (80, 24), ("space",))
-        for name, size in (("welcome", (120, 32)), ("welcome-small", (60, 20))):
+        if not notes_only:
+            for name, size, keys in scenarios:
+                await capture(root, output, name, size, keys)
+            await capture(root, output, "overview-light", (100, 28), theme="catppuccin-latte")
+            await capture(root, output, "overview-contrast", (80, 24), theme="high-contrast")
+            await capture(root, output, "notification-compact", (80, 24), ("space",))
+        for name, size in (() if notes_only else (("welcome", (120, 32)), ("welcome-small", (60, 20)))):
             os.environ["TASKMAN_CONFIG_DIR"] = str(root / name)
             app = TaskApp(theme="taskman-dark-teal", choose_vault=True)
             async with app.run_test(size=size, notifications=True) as pilot:
@@ -93,4 +152,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--notes-only", action="store_true", help="Export only Notes scenarios")
+    parser.add_argument("--output", type=Path, help="Folder for the exported SVG screens")
+    args = parser.parse_args()
+    asyncio.run(main(notes_only=args.notes_only, output=args.output))

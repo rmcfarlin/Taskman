@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "taskman-vault"
 dynamic = ["version"]
-description = "A keyboard-first task manager for your Markdown folders"
+description = "A keyboard-first task and notes manager for your Markdown folders"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["textual>=8.2.8,<9", "rich>=14.2,<16"]
-keywords = ["tasks", "markdown", "terminal", "tui", "productivity"]
+keywords = ["tasks", "notes", "markdown", "terminal", "tui", "productivity"]
 classifiers = [
   "Environment :: Console",
   "Operating System :: OS Independent",

@@ -2,11 +2,11 @@
 
 # Taskman
 
-A keyboard-first task manager for folders of Markdown files. Open a folder, capture your tasks, and keep your work readable in any text editor. No account or server is required.
+A keyboard-first task and notes manager for folders of Markdown files. Open a folder, capture tasks and reference notes, and keep your work readable in any text editor. No account or server is required.
 
 ## Download and run
 
-**Windows:** download the `taskman-2.4.3-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
+**Windows:** download the `taskman-2.5.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-2.4.3-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-2.5.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -97,6 +97,26 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | q | Quit |
 
 Letter shortcuts apply while browsing tasks; typing in a text field edits the field. Use a terminal with a Unicode-capable font for the best display.
+
+## Reference notes
+
+Press **8** to browse Markdown files in your vault's `Notes/` folder, including existing notes. Select a note to read its preview; press **e** or **Enter** to edit it. Press **a** to create a note, or **Ctrl+N** to capture one from a task view. Notes have a title, Markdown body, category, tags, and optional projects. Separate tags and projects with commas. Use **Tab** to move through the editor and **Ctrl+S** to save. **Esc** offers to discard unsaved changes or keep editing.
+
+| Key while browsing Notes | Action |
+| --- | --- |
+| / | Search titles, full note contents, categories, tags, and projects |
+| c / t / j | Filter by category / tag / project |
+| Esc | Clear search first, then clear category, tag, and project filters |
+| l | Link the selected note to an existing task |
+| k | Open a linked task |
+| Ctrl+T | Create and link a task using the note's title as a starting point |
+| Ctrl+K | Find commands, including **Unlink task from note** and **Show unreadable notes** when applicable |
+
+Notes can stand alone or support several tasks. Creating a task from a note keeps the original note and its contents. Deleting a linked task leaves the note available, with that task marked unavailable. Unlinking removes the relationship without deleting either item.
+
+While browsing tasks, **l** links an existing reference note or creates a linked note, and **k** opens related notes. Linked notes also appear in the task's details pane. The existing **n** shortcut still edits the task's attached note.
+
+Notes remain local Markdown files and use your existing sync and backup tools. Taskman stores note labels and relationships in a Markdown comment. Linking adds an identity comment to the task so the relationship survives edits and moves; keep these comments when editing files externally. Tasks receive no identity comment until you link them.
 
 ## Plain terminal commands
 

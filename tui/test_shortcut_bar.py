@@ -38,7 +38,7 @@ def _visible_text(dock):
     return [dock.render_line(y).text for y in range(dock.size.height)]
 
 
-@pytest.mark.parametrize("width, rows", [(160, 2), (120, 3), (80, 4), (60, 5), (40, 8)])
+@pytest.mark.parametrize("width, rows", [(160, 2), (120, 3), (80, 5), (60, 6), (40, 9)])
 def test_every_task_shortcut_remains_visible(width, rows):
     async def go():
         app = DockApp()
@@ -130,5 +130,5 @@ def test_search_hints_follow_text_input_behavior_and_restore_task_actions():
             dock.set_mode("inspector")
             await pilot.pause()
             assert " q  Quit" in "\n".join(_visible_text(dock))
-            assert dock.size.height == 5
+            assert dock.size.height == 6
     asyncio.run(go())

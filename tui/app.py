@@ -73,6 +73,9 @@ try:  # `python -m tui` (package) vs `python tui/app.py` (script)
     from tui import settings
     from tui.vaults import discover_vault, initialize_vault, normalize_folder
     from tui.vault_screen import VaultScreen, VaultChoice
+    from tui.notes import NotesStore, NoteConflict
+    from tui.notes_ui import NotesWorkspace
+    from tui.notes_actions import NotesActions
 except ImportError:  # pragma: no cover -- direct-script fallback
     import taskman as tm  # type: ignore[no-redef]
     from taskman import Task  # type: ignore[no-redef]
@@ -83,6 +86,9 @@ except ImportError:  # pragma: no cover -- direct-script fallback
     import settings
     from vaults import discover_vault, initialize_vault, normalize_folder
     from vault_screen import VaultScreen, VaultChoice
+    from notes import NotesStore, NoteConflict
+    from notes_ui import NotesWorkspace
+    from notes_actions import NotesActions
 
 # Views shown in the sidebar: (hotkey, view-name, label). Order = 1..7 keys.
 SIDEBAR_VIEWS: tuple[tuple[str, str, str], ...] = (
@@ -949,8 +955,9 @@ class Sidebar(OptionList):
         return line
 
     def populate(self, view_counts: dict[str, int], projects: list[str],
-                 project_counts: dict[str, int], view: str, project: str) -> None:
-        self._last_args = (view_counts, projects, project_counts, view, project)
+                 project_counts: dict[str, int], view: str, project: str,
+                 note_count: int = 0) -> None:
+        self._last_args = (view_counts, projects, project_counts, view, project, note_count)
         opts: list[Option | None] = [
             Option(Text("VIEWS", self._s("sidebar--heading")), id="h:views", disabled=True),
         ]
@@ -972,6 +979,10 @@ class Sidebar(OptionList):
                 self._item(VIEW_ICON["project"], name,
                            project_counts.get(name.casefold(), 0), active),
                 id=f"proj:{name}"))
+        opts.extend([None, Option(Text("REFERENCE", self._s("sidebar--heading")),
+                                 id="h:reference", disabled=True),
+                     Option(self._item("▤", "Notes", note_count, view == "notes", hotkey="8"),
+                            id="view:notes")])
         self.set_options(opts)
         # NB: index into self.options (separators are not options), not opts.
         active_id = (f"proj:{project}" if project else f"view:{view}").casefold()
@@ -1052,6 +1063,11 @@ class Inspector(VerticalScroll, can_focus=True):
         background: $block-cursor-background; color: $block-cursor-foreground;
     }
     Inspector #ins-note { color: $foreground; }
+    Inspector #ins-references {
+        height: auto; max-height: 8; border: none; padding: 0; background: $background;
+    }
+    Inspector #ins-references:focus { border: none; background-tint: transparent; }
+    Inspector #ins-references > .option-list--option-hover { background: transparent; }
     """
 
     def __init__(self, *, id: str | None = None) -> None:
@@ -1065,6 +1081,8 @@ class Inspector(VerticalScroll, can_focus=True):
         yield OptionList(id="ins-kids")
         yield Label("NOTE", classes="ins-head", id="ins-notehead")
         yield Static("", id="ins-note")
+        yield Label("REFERENCE NOTES · Enter opens", classes="ins-head", id="ins-refhead")
+        yield OptionList(id="ins-references")
 
     def on_mount(self) -> None:
         self.border_title = "INSPECT"
@@ -1230,11 +1248,12 @@ class AddScreen(ModalScreen["dict | None"]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    def __init__(self, projects: list[str], parent: str = "", project: str = "") -> None:
+    def __init__(self, projects: list[str], parent: str = "", project: str = "", initial: str = "") -> None:
         super().__init__()
         self._projects = projects
         self._parent_name = parent
         self._project = project
+        self._initial_text = initial
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1245,7 +1264,7 @@ class AddScreen(ModalScreen["dict | None"]):
                                     if self._parent_name else "Add task")
             dlg.border_subtitle = "Enter = add · Esc = cancel"
             yield Label("Task", classes="field first")
-            yield TaskInput(placeholder="What needs doing?  #tags and task emoji work here",
+            yield TaskInput(value=self._initial_text, placeholder="What needs doing?  #tags and task emoji work here",
                         id="text")
             yield Label("", id="form-error", classes="form-error")
             if not self._parent_name:
@@ -1742,6 +1761,19 @@ class HelpScreen(ModalScreen[None]):
             ("Delete", "delete the task, its note and its sub-tasks (asks first)"),
             ("o", "Open the note in your editor"),
         )),
+        ("Reference notes", (
+            ("8", "Notes library — standalone Markdown in Notes/"),
+            ("Ctrl+N", "Capture a new reference note from anywhere"),
+            ("a / e / Enter", "in Notes: new / edit / edit selected note"),
+            ("/", "in Notes: search titles, full content, categories, tags, and projects"),
+            ("c / t / j", "in Notes: filter category / tag / project; Esc clears filters"),
+            ("l", "Link an existing note to a task, or a task to the selected note"),
+            ("k", "Open the selected task's notes, or the selected note's tasks"),
+            ("Ctrl+T", "in Notes: create a task from this note and keep the reference"),
+            ("Alt+3 / Tab", "Focus the reading pane; arrows and PgUp/PgDn scroll"),
+            ("Ctrl+S / Esc", "in the note editor: save / cancel with a discard check"),
+            ("Ctrl+K", "Unlink tasks, inspect unreadable notes, and find every action"),
+        )),
         ("App", (
             ("Ctrl+O", "Open Vault — browse folders, recent vaults, or set up a new folder"),
             ("Ctrl+S", "Confirm saved — task changes save immediately to Markdown"),
@@ -1788,7 +1820,7 @@ def guard_change(method):
     def guarded(self, *args, **kwargs):
         try:
             return method(self, *args, **kwargs)
-        except (OSError, ValueError, HistoryConflict) as exc:
+        except (OSError, ValueError, HistoryConflict, NoteConflict) as exc:
             self._change_failed(exc)
             return None
     return guarded
@@ -1812,7 +1844,7 @@ class OpeningVaultScreen(ModalScreen):
         self.app.cancel_vault_open()
 
 
-class TaskApp(App):
+class TaskApp(NotesActions, App):
     """Markdown-native task manager for the C:\\Tasks vault."""
 
     ENABLE_COMMAND_PALETTE = False
@@ -1893,7 +1925,13 @@ class TaskApp(App):
         Binding("colon", "commands", "Commands", show=False),
         Binding("a", "add", "Add"),
         Binding("e", "edit", "Edit"),
-        Binding("space,c,x", "toggle", "Complete", key_display="space"),
+        Binding("space,x", "toggle", "Complete", key_display="space"),
+        Binding("c", "complete_or_category", "Complete / category", show=False),
+        Binding("8", "notes", "Notes", show=False),
+        Binding("ctrl+n", "new_reference", "New note", show=False),
+        Binding("ctrl+t", "task_from_reference", "Create task from note", show=False),
+        Binding("l", "link_reference", "Link note", show=False),
+        Binding("k", "linked_references", "Linked notes / tasks", show=False),
         Binding("d", "due", "Due"),
         Binding("p", "priority", "Priority", show=False),
         Binding("s", "status", "Status", show=False),
@@ -1933,6 +1971,10 @@ class TaskApp(App):
         # This placeholder is never scanned or edited before the user chooses.
         self.vault = discovered or Path.cwd().resolve()
         self.store = tm.Store(self.vault)
+        self.notes_store = NotesStore(self.vault)
+        self.note_category = self.note_tag = self.note_project = ""
+        self._notes = []
+        self._selected_note_file = ""
         self.history = History(self.vault)
         self._opening_vault = False
         self._open_generation = 0
@@ -1960,6 +2002,9 @@ class TaskApp(App):
             return False
         # Editing a search or a text field must never restore task files.
         if action in ("undo", "redo") and isinstance(self.focused, (Input, TextArea)):
+            return False
+        if isinstance(self.screen, ModalScreen) and action in {
+                "new_reference", "task_from_reference", "notes", "link_reference", "linked_references"}:
             return False
         return True
 
@@ -2008,6 +2053,9 @@ class TaskApp(App):
                                       id="search", compact=True, select_on_focus=False)
                     yield Label("Esc clear", id="search-hint")
                 yield TaskList(id="tasks")
+                notes = NotesWorkspace(id="notes-workspace")
+                notes.display = False
+                yield notes
             inspector = Inspector(id="inspector")
             inspector.display = False
             yield inspector
@@ -2123,6 +2171,10 @@ class TaskApp(App):
                 self.call_after_refresh(self.action_open_vault)
             return
         self.vault, self.store, self.history = result
+        self.notes_store = NotesStore(self.vault)
+        self.note_category = self.note_tag = self.note_project = ""
+        self._selected_note_file = ""
+        self._notes = []
         self._vault_ready = True
         self.view, self.project, self.search_query = DEFAULT_VIEW, "", ""
         self._command_target = self._inspected_task = None
@@ -2191,6 +2243,11 @@ class TaskApp(App):
         """
         if not self._vault_ready:
             return
+        self._notes = self.notes_store.refresh()
+        self._sync_notes_mode()
+        if self.view == "notes":
+            self._refresh_notes(reload=reload)
+            return
         tl = self.query_one(TaskList)
         previous_main_id = tl.current.id if tl.current else None
         navigating = select is not None and keep_id is None
@@ -2233,7 +2290,7 @@ class TaskApp(App):
         self._update_crumb()
 
         self.query_one(Sidebar).populate(counts, self.store.projects(),
-                                         tm.project_counts(tasks), self.view, self.project)
+                                         tm.project_counts(tasks), self.view, self.project, len(self._notes))
         # Status bar: what am I looking at, and how much of it is urgent.
         real = [t for t in matches if not t.context]
         hi = sum(1 for t in real if t.open and t.priority >= 4)
@@ -2257,6 +2314,8 @@ class TaskApp(App):
                     break
 
     def _selected(self) -> Task | None:
+        if self.view == "notes":
+            return None
         if self._command_target is not None:
             return self._command_target
         if isinstance(self.focused, Inspector) and self._inspected_task is not None:
@@ -2269,6 +2328,9 @@ class TaskApp(App):
         return self.query_one(TaskList).current
 
     def _update_inspector(self, t: Task | None) -> None:
+        if self.view == "notes":
+            self._context_hint()
+            return
         tl = self.query_one(TaskList)
         insp = self.query_one(Inspector)
         self.query_one("#status-right", Label).update(
@@ -2277,6 +2339,7 @@ class TaskApp(App):
             self._inspected_task = t
             insp.show(t, self.store.tasks, dt.date.today(), tl.style_for,
                       context=bool(t and t.id in self._context_ids))
+            self._show_reference_links(t)
         self._context_hint()
 
     def _context_hint(self) -> None:
@@ -2290,11 +2353,16 @@ class TaskApp(App):
             hint = "INSPECT  ·  ↑↓ / PgUp / PgDn scroll  ·  Tab subtasks  ·  ← back"
         elif self.focused and self.focused.id == "ins-kids":
             hint = "SUBTASKS  ·  Space complete child  ·  e edit  ·  n note  ·  Esc back"
+        elif self.focused and self.focused.id == "notes-preview":
+            hint = "READING  ·  ↑↓ / PgUp / PgDn scroll  ·  ← notes  ·  e edit  ·  k linked tasks"
+        elif self.view == "notes":
+            hint = "NOTES  ·  ↑↓ browse  ·  Enter edit  ·  Tab read  ·  Esc clear filters  ·  Ctrl+K actions"
         else:
             hint = "↑↓ move  ·  Enter inspect  ·  Tab panes  ·  Ctrl+K all actions"
         self.query_one("#contextbar", Label).update(hint)
         self.query_one(ShortcutBar).set_mode(
-            "search" if isinstance(self.focused, SearchInput) else "tasks",
+            ("notes-search" if self.view == "notes" else "search") if isinstance(self.focused, SearchInput)
+            else ("notes" if self.view == "notes" else "tasks"),
             can_undo=self.history.can_undo, can_redo=self.history.can_redo,
         )
         self._position_notifications()
@@ -2307,7 +2375,9 @@ class TaskApp(App):
         """Record only files touched by this change; restore navigation on undo."""
         current = self.query_one(TaskList).current
         context = {"view": self.view, "project": self.project, "query": self.search_query,
-                   "task_id": current.id if current else None}
+                   "task_id": current.id if current else None, "note_file": self._selected_note_file,
+                   "note_category": self.note_category, "note_tag": self.note_tag,
+                   "note_project": self.note_project}
         with self.history.record(label, paths, context=context):
             yield
 
@@ -2324,6 +2394,10 @@ class TaskApp(App):
         self.view = context.get("view", self.view)
         self.project = context.get("project", self.project)
         self.search_query = context.get("query", "")
+        self._selected_note_file = context.get("note_file", "")
+        self.note_category = context.get("note_category", "")
+        self.note_tag = context.get("note_tag", "")
+        self.note_project = context.get("note_project", "")
         self.query_one("#search", Input).value = self.search_query
         self.store.refresh(force=True)
         self.refresh_tasks(keep_id=context.get("task_id"))
@@ -2344,7 +2418,7 @@ class TaskApp(App):
         def guarded(*args, **kwargs):
             try:
                 return callback(*args, **kwargs)
-            except (OSError, ValueError, HistoryConflict) as exc:
+            except (OSError, ValueError, HistoryConflict, NoteConflict) as exc:
                 self._change_failed(exc)
                 return None
         return guarded
@@ -2360,6 +2434,19 @@ class TaskApp(App):
         self.notify(str(exc), title="Could not save change", severity="error", timeout=7, markup=False)
 
     # -- events ---------------------------------------------------------------
+    # Textual registers @on handlers on MessagePump classes, not plain mixins.
+    @on(NotesWorkspace.Selected)
+    def _notes_selection_event(self, event: NotesWorkspace.Selected) -> None:
+        self._reference_selected(event)
+
+    @on(NotesWorkspace.Activated)
+    def _notes_activation_event(self, event: NotesWorkspace.Activated) -> None:
+        self._reference_activated(event)
+
+    @on(OptionList.OptionSelected, "#ins-references")
+    def _reference_link_event(self, event: OptionList.OptionSelected) -> None:
+        self._open_inspector_reference(event)
+
     @on(TaskList.Highlighted)
     def _row_moved(self, e: TaskList.Highlighted) -> None:
         task_id = e.task.id if e.task else None
@@ -2408,7 +2495,7 @@ class TaskApp(App):
     @on(OptionList.OptionSelected, "#sidebar")
     def _sidebar_selected(self, e: OptionList.OptionSelected) -> None:
         self._sidebar_pick(e.option_id)
-        self.query_one(TaskList).focus()
+        self.action_focus_tasks()
 
     @on(OptionList.OptionSelected, "#ins-kids")
     @guard_change
@@ -2583,6 +2670,18 @@ class TaskApp(App):
         ]
         commands = [Command(key, title, shortcut, description, keywords, enabled)
                     for key, title, shortcut, description, keywords, enabled in actions]
+        if self.view == "notes":
+            commands = [command for command in commands if command.id in {
+                "undo", "redo", "focus_search", "theme", "refresh", "open_note", "save",
+                "open_vault", "help", "quit"}]
+            commands = [Command(command.id, "Find notes" if command.id == "focus_search" else command.title,
+                                command.shortcut,
+                                "Search titles, content, categories, tags, and projects" if command.id == "focus_search" else command.description,
+                                command.keywords,
+                                bool(self.query_one(NotesWorkspace).current) if command.id == "open_note" else command.enabled)
+                        for command in commands]
+        references = self._reference_commands()
+        commands = references + commands if self.view == "notes" else commands + references
         commands += [Command(f"view:{name}", f"Go to {label}", key,
                              "Open this view and clear the search filter", "view navigate")
                      for key, name, label in SIDEBAR_VIEWS]
@@ -2610,7 +2709,10 @@ class TaskApp(App):
             self._set_inspector(False)
         if not self.query_one("#search", Input).value:
             self.query_one("#searchbar").display = False
-        self.query_one(TaskList).focus()
+        if self.view == "notes":
+            self.query_one(NotesWorkspace).focus_list()
+        else:
+            self.query_one(TaskList).focus()
 
     def action_focus_sidebar(self) -> None:
         sidebar = self.query_one(Sidebar)
@@ -2620,6 +2722,9 @@ class TaskApp(App):
             self.action_commands()
 
     def action_focus_inspector(self) -> None:
+        if self.view == "notes":
+            self.query_one(NotesWorkspace).focus_preview()
+            return
         selected = self._selected()
         self._set_inspector(True)
         if selected is not None:
@@ -2640,6 +2745,9 @@ class TaskApp(App):
             self.query_one("#searchbar").display = False
         elif self.query_one(Inspector).display:
             self._set_inspector(False)
+        elif self.view == "notes":
+            self.note_category = self.note_tag = self.note_project = ""
+            self.refresh_tasks()
         self.action_focus_tasks()
 
     def _set_inspector(self, show: bool) -> None:
@@ -2650,6 +2758,9 @@ class TaskApp(App):
 
     def action_inspect(self) -> None:
         if isinstance(self.screen, ModalScreen):
+            return
+        if self.view == "notes":
+            self.query_one(NotesWorkspace).focus_preview()
             return
         insp = self.query_one(Inspector)
         self._set_inspector(not insp.display)
@@ -2692,6 +2803,12 @@ class TaskApp(App):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
+    def action_complete_or_category(self) -> None:
+        if self.view == "notes":
+            self.action_note_category()
+        else:
+            self.action_toggle()
+
     def action_toggle(self) -> None:
         t = self._selected()
         if t:
@@ -2708,6 +2825,9 @@ class TaskApp(App):
         self.push_screen(self.status_picker(t), _done)
 
     def action_note(self) -> None:
+        if self.view == "notes":
+            self.action_edit_reference()
+            return
         t = self._selected()
         if not t:
             self.announce("Select a task first, then press n")
@@ -2715,6 +2835,9 @@ class TaskApp(App):
         self.edit_note(t)
 
     def action_project(self) -> None:
+        if self.view == "notes":
+            self.action_note_project()
+            return
         t = self._selected()
         if not t:
             self.announce("Select a task first, then press j")
@@ -2740,6 +2863,9 @@ class TaskApp(App):
             self.refresh_tasks(keep_id=t.id)
 
     def action_add(self) -> None:
+        if self.view == "notes":
+            self.action_new_reference()
+            return
         def _done(res: dict | None) -> None:
             if not res:
                 return
@@ -2752,6 +2878,9 @@ class TaskApp(App):
         self.push_screen(AddScreen(self.store.projects(), project=self.project), self._guard(_done))
 
     def action_add_sub(self) -> None:
+        if self.view == "notes":
+            self.action_note_tag()
+            return
         t = self._selected()
         if not t:
             self.announce("Select a parent task first, then press t")
@@ -2767,6 +2896,9 @@ class TaskApp(App):
         self.push_screen(AddScreen(self.store.projects(), parent=t.description or t.id), self._guard(_done))
 
     def action_edit(self) -> None:
+        if self.view == "notes":
+            self.action_edit_reference()
+            return
         t = self._selected()
         if not t:
             return
@@ -2848,6 +2980,8 @@ class TaskApp(App):
 
     def action_open_note(self) -> None:
         t = self._selected()
+        if self.view == "notes":
+            t = self.query_one(NotesWorkspace).current
         if not t:
             return
         path = self.vault / t.file
