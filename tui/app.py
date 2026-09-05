@@ -23,7 +23,7 @@ Accessibility notes (please keep these true when editing)
     a word in the inspector; priority is a glyph (▲ ⇈ ↑ ↓ ⇊) AND a short
     word in its column; overdue says "late" / "Overdue" in words.
   - Every action is keyboard-accessible and discoverable in the command menu. Focus is always
-    visible (accent border on the focused panel, inverted cursor row).
+    visible (accent pane divider, inverted cursor row, and contextual key hints).
   - Common actions have lowercase shortcuts, taught in the footer and
     command menu. Ctrl+K searches every action, view, and project. Arrow
     keys and Alt+1/2/3 navigate panes; Tab visits fields and subtasks.
@@ -435,7 +435,7 @@ class TaskList(ScrollView, can_focus=True):
 
     DEFAULT_CSS = """
     TaskList {
-        background: $surface;
+        background: $background;
         color: $foreground;
         overflow-x: hidden;
         scrollbar-size-horizontal: 0;
@@ -887,9 +887,15 @@ class Sidebar(OptionList):
         border-title-color: $text-accent;
         border-title-style: bold;
         padding: 1 1;
-        background: $surface;
-        &:focus { border-right: solid $accent; }
+        background: $background;
+        /* OptionList's default focus border must not move mouse targets. */
+        &:focus {
+            border: none;
+            border-right: solid $accent;
+            background-tint: transparent;
+        }
         & > .option-list--option { padding: 0; }
+        & > .option-list--option-hover { background: transparent; }
         & > .sidebar--heading { color: $text-accent; text-style: bold; }
         & > .sidebar--hotkey { color: $text-accent; text-style: bold; }
         & > .sidebar--icon { color: $text-muted; }
@@ -982,23 +988,27 @@ class TaskInput(Input):
 
 
 class SearchInput(TaskInput):
-    """Compact search box. Enter/Down hand focus to the list; the bar
-    around it lights up while focused or filtering."""
+    """On-demand Find. Enter/Down return to tasks; Escape closes the bar."""
 
     BINDINGS = [Binding("down", "to_list", "To list", show=False)]
 
     def action_to_list(self) -> None:
-        self.screen.query_one(TaskList).focus()
+        self.app.action_focus_tasks()
 
     def _light(self) -> None:
         if self.parent is not None:
-            self.parent.set_class(self.has_focus or bool(self.value), "-active")
+            active = self.has_focus or bool(self.value)
+            self.parent.set_class(active, "-active")
+            # Keep rows fixed during clicks, including the second of a double-click.
+            # Only explicit dismissal may collapse an empty Find bar.
+            if active:
+                self.parent.display = True
 
     def on_focus(self) -> None:
-        self._light()
+        self.call_later(self._light)
 
     def on_blur(self) -> None:
-        self._light()
+        self.call_later(self._light)
 
     def watch_value(self, _value: str) -> None:
         self._light()
@@ -1025,7 +1035,7 @@ class Inspector(VerticalScroll, can_focus=True):
         border-title-color: $text-accent;
         border-title-style: bold;
         border-subtitle-color: $text-muted;
-        background: $surface;
+        background: $background;
         scrollbar-size-vertical: 1;
     }
     Inspector:focus-within { border: round $accent; }
@@ -1037,7 +1047,7 @@ class Inspector(VerticalScroll, can_focus=True):
         text-wrap: nowrap; text-overflow: ellipsis;
     }
     Inspector #ins-kids > .option-list--option-highlighted { background: transparent; color: $foreground; }
-    Inspector #ins-kids:focus { background: $panel; }
+    Inspector #ins-kids:focus { background: $background; background-tint: transparent; }
     Inspector #ins-kids:focus > .option-list--option-highlighted {
         background: $block-cursor-background; color: $block-cursor-foreground;
     }
@@ -1811,7 +1821,7 @@ class TaskApp(App):
     ModalScreen { align: center middle; background: $background 60%; }
 
     /* top bar */
-    #topbar { height: 3; background: $surface; padding: 0 2; align-vertical: middle; border-bottom: solid $primary-muted; }
+    #topbar { height: 3; background: $background; padding: 0 2; align-vertical: middle; border-bottom: solid $primary-muted; }
     #topbar.-compact { height: 1; border-bottom: none; }
     #brand { width: auto; color: $text-accent; text-style: bold; }
     #crumb { width: 1fr; color: $text-muted; padding: 0 2; content-align: center middle; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -1819,12 +1829,8 @@ class TaskApp(App):
 
     /* body */
     #body { height: 1fr; background: $background; }
-    #main { width: 1fr; padding: 0 1; }
-    #viewhead { height: 3; padding: 1 1 0 1; }
-    #viewhead.-compact { height: 1; padding: 0 1; }
-    #view-title { width: 1fr; color: $foreground; text-style: bold; }
-    #view-hint { width: auto; color: $text-muted; }
-    #searchbar { height: 1; margin: 0 0 1 0; background: $panel; }
+    #main { width: 1fr; padding: 0 1; background: $background; }
+    #searchbar { display: none; height: 1; margin: 0 0 1 0; background: $panel; }
     #searchbar.-active { background: $primary 25%; }
     #search-icon { width: 3; content-align: center middle; color: $text-accent; text-style: bold; }
     #search {
@@ -1835,19 +1841,17 @@ class TaskApp(App):
     #search-hint { width: auto; color: $text-muted; padding-right: 1; }
     #tasks {
         height: 1fr; margin-left: 0;
-        border: none; border-left: solid $primary-muted;
-        border-title-color: $text-accent; border-title-style: bold;
-        border-subtitle-color: $text-muted;
-        &:focus { border-left: solid $accent; }
+        border: none;
+        padding: 0 1;
     }
 
     /* status bar */
-    #statusbar { height: 1; background: $panel; }
+    #statusbar { height: 1; background: $background; }
     #status-view { width: auto; padding: 0 1; background: $primary; color: $block-cursor-foreground; text-style: bold; }
     #status-info { width: 1fr; padding: 0 1; color: $text-muted; }
     #status-right { width: auto; padding: 0 1; color: $text-muted; }
-    #contextbar { height: 1; width: 1fr; padding: 0 2; color: $text-muted; background: $surface; text-wrap: nowrap; text-overflow: ellipsis; }
-    #shortcuts { background: $panel; }
+    #contextbar { height: 1; width: 1fr; padding: 0 2; color: $text-muted; background: $background; text-wrap: nowrap; text-overflow: ellipsis; }
+    #shortcuts { background: $background; }
 
     /* dialogs */
     #dlg {
@@ -1998,14 +2002,11 @@ class TaskApp(App):
             sidebar.border_title = "NAVIGATE"
             yield sidebar
             with Vertical(id="main"):
-                with Horizontal(id="viewhead"):
-                    yield Label("", id="view-title")
-                    yield Label("Ctrl+K  commands", id="view-hint")
                 with Horizontal(id="searchbar"):
                     yield Label("/", id="search-icon")
                     yield SearchInput(placeholder="Find a task, project, or #tag…",
                                       id="search", compact=True, select_on_focus=False)
-                    yield Label("/ find", id="search-hint")
+                    yield Label("Esc clear", id="search-hint")
                 yield TaskList(id="tasks")
             inspector = Inspector(id="inspector")
             inspector.display = False
@@ -2158,11 +2159,8 @@ class TaskApp(App):
         self.query_one("#main").display = not fullscreen
         insp.styles.width = width if fullscreen else max(34, min(52, width // 3))
         insp.styles.margin = (0, 0, 0, 0 if fullscreen else 1)
-        self.query_one("#viewhead").display = self.size.height >= 22
-        self.query_one("#viewhead").set_class(self.size.height < 30, "-compact")
         self.query_one("#topbar").set_class(self.size.height < 30, "-compact")
         self._update_crumb()
-        self.query_one("#view-hint").display = width >= 100 and not insp.display
         self.query_one("#clock").display = width >= 100
         self.query_one("#search-hint").display = width >= 80
         self.query_one("#status-info").display = width >= 90
@@ -2227,7 +2225,6 @@ class TaskApp(App):
 
         n = sum(1 for t in matches if not t.context)
         label = self._view_label()
-        self.query_one("#view-title", Label).update(Text(f"{label}  ·  {n}"))
         tl.border_title = Text("TASKS" if self.size.height >= 27 else label.upper())
         tl.border_subtitle = Text(f"{n} match{'es' if n != 1 else ''} for “{self.search_query}”"
                                  if self.search_query else f"{n} task{'s' if n != 1 else ''}")
@@ -2383,7 +2380,7 @@ class TaskApp(App):
 
     @on(Input.Submitted, "#search")
     def _search_submitted(self, _e: Input.Submitted) -> None:
-        self.query_one(TaskList).focus()
+        self.action_focus_tasks()
 
     def _sidebar_pick(self, option_id: str | None) -> None:
         if not option_id or option_id.startswith("h:"):
@@ -2611,6 +2608,8 @@ class TaskApp(App):
     def action_focus_tasks(self) -> None:
         if self.query_one(Inspector).display and self.size.width < 72:
             self._set_inspector(False)
+        if not self.query_one("#search", Input).value:
+            self.query_one("#searchbar").display = False
         self.query_one(TaskList).focus()
 
     def action_focus_sidebar(self) -> None:
@@ -2630,13 +2629,15 @@ class TaskApp(App):
     def action_focus_search(self) -> None:
         if not self.query_one("#main").display:
             self._set_inspector(False)
+        self.query_one("#searchbar").display = True
         self.query_one("#search", Input).focus()
 
     def action_escape(self) -> None:
         """Esc: clear a search first; otherwise close the inspector."""
         search = self.query_one("#search", Input)
-        if search.value:
+        if self.query_one("#searchbar").display:
             search.value = ""          # triggers Changed -> refresh
+            self.query_one("#searchbar").display = False
         elif self.query_one(Inspector).display:
             self._set_inspector(False)
         self.action_focus_tasks()

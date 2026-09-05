@@ -73,7 +73,7 @@ def verify_assets(assets: dict[str, Path], version: str, root: Path) -> None:
         _check_document(_zip_member(archive, name), root / "LICENSE", wheel, name)
 
     source_documents = ("README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
-                        "docs/DEVELOPMENT.md")
+                        "docs/DEVELOPMENT.md", "docs/RELEASE_NOTES.md")
     with tarfile.open(assets["sdist"], "r:gz") as archive:
         for document in source_documents:
             name = f"taskman_vault-{version}/{document}"
@@ -87,11 +87,12 @@ def verify_assets(assets: dict[str, Path], version: str, root: Path) -> None:
                 _check_document(source.read(), root / document, assets["sdist"], name)
     for kind, prefix, documents in (
         ("source", f"taskman-{version}", source_documents),
-        ("standalone", "taskman", ("README.md", "LICENSE", "SECURITY.md")),
+        ("standalone", "taskman", ("README.md", "LICENSE", "SECURITY.md", "docs/RELEASE_NOTES.md")),
     ):
         with zipfile.ZipFile(assets[kind]) as archive:
             for document in documents:
-                name = f"{prefix}/{document}"
+                archived_name = Path(document).name if kind == "standalone" else document
+                name = f"{prefix}/{archived_name}"
                 _check_document(_zip_member(archive, name), root / document, assets[kind], name)
 
 

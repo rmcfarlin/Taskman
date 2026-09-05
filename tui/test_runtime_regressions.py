@@ -226,7 +226,8 @@ def test_search_state_does_not_shadow_framework_query_and_focus(runtime_vault):
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         async with app.run_test(size=(100, 30), notifications=True) as pilot:
             assert app.query("#tasks").first() is app.query_one(appmod.TaskList)
-            await app.action_focus("search")
+            await app.action_focus("tasks")
+            await pilot.press("/")
             await pilot.pause()
             assert app.query_one("#search", Input).has_focus
             await _type(pilot, "Review")

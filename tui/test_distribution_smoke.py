@@ -38,7 +38,7 @@ def _write_archive(path: Path, members: dict[str, bytes]) -> None:
 @pytest.fixture
 def release(tmp_path):
     documents = ("README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
-                 "docs/DEVELOPMENT.md")
+                 "docs/DEVELOPMENT.md", "docs/RELEASE_NOTES.md")
     for name in documents:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,8 +59,8 @@ def release(tmp_path):
                   for name in documents},
         "source": {f"taskman-{VERSION}/{name}": (tmp_path / name).read_bytes()
                    for name in documents},
-        "standalone": {f"taskman/{name}": (tmp_path / name).read_bytes()
-                       for name in ("README.md", "LICENSE", "SECURITY.md")},
+        "standalone": {f"taskman/{Path(name).name}": (tmp_path / name).read_bytes()
+                       for name in ("README.md", "LICENSE", "SECURITY.md", "docs/RELEASE_NOTES.md")},
     }
     paths = {
         "wheel": dist / f"taskman_vault-{VERSION}-py3-none-any.whl",
@@ -126,7 +126,8 @@ def test_rejects_missing_or_changed_license_in_each_format(smoke, release, kind,
 
 @pytest.mark.parametrize("kind,document", [
     ("sdist", "CONTRIBUTING.md"), ("source", "SECURITY.md"),
-    ("standalone", "SECURITY.md"),
+    ("standalone", "SECURITY.md"), ("standalone", "RELEASE_NOTES.md"),
+    ("sdist", "docs/RELEASE_NOTES.md"), ("source", "docs/RELEASE_NOTES.md"),
 ])
 def test_rejects_missing_distribution_guidance(smoke, release, kind, document):
     root, paths, members = release

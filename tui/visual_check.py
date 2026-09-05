@@ -59,6 +59,9 @@ async def main() -> None:
             (root / "Projects" / f"{name}.md").write_text(f"# {name}\n\n## Tasks\n{content}", encoding="utf-8")
         scenarios = [
             ("overview-wide", (140, 38), ()),
+            ("find-open", (140, 38), ("/",)),
+            ("find-results", (140, 38), ("/", "r", "e", "v", "i", "e", "w", "enter")),
+            ("find-cleared", (140, 38), ("/", "r", "e", "v", "escape")),
             ("inspector-wide", (140, 38), ("right",)),
             ("commands", (120, 32), ("ctrl+k",)),
             ("commands-filtered", (100, 28), ("ctrl+k", "d", "u", "e")),

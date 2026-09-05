@@ -6,7 +6,7 @@ A keyboard-first task manager for folders of Markdown files. Open a folder, capt
 
 ## Download and run
 
-**Windows:** download the `taskman-2.4.2-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
+**Windows:** download the `taskman-2.4.3-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-2.4.2-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-2.4.3-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -74,6 +74,8 @@ Setup can create a new folder or fill in missing structure in an existing one. O
 ## Keyboard essentials
 
 The bottom shortcut bar shows the actions available where you are working and wraps to fit the terminal. Dark Teal is the default theme; press **m** to preview the other themes, including Light and High contrast.
+
+Press **/** to open Find. It stays visible while a filter is active; **Enter** or **↓** returns to the results, and **Esc** clears the filter and closes Find.
 
 | Key | Action |
 | --- | --- |

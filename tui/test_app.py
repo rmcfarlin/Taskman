@@ -224,7 +224,7 @@ def test_sidebar_browses_views_and_projects_one_step_at_a_time(tmp_path, monkeyp
             tl = app.query_one(appmod.TaskList)
             assert tl.current is not None and tl.current.description == "B1"
             assert tl.border_title == "TASKS"
-            assert "Beta" in str(app.query_one("#view-title").render())
+            assert "BETA" in str(app.query_one("#status-view").render())
             await pilot.press("enter")                                # back to the list
             await pilot.pause()
             assert tl.has_focus
@@ -445,10 +445,10 @@ def test_theme_picker_previews_reverts_and_keeps(tmp_path, monkeypatch):
             await pilot.pause()
             assert app.theme == "taskman-iris" and saved == ["taskman-iris"]
             assert not isinstance(app.screen, appmod.ThemeScreen)
-            # The sidebar re-baked its colors for the new theme (Iris surface, not Teal's).
+            # The sidebar re-baked its colors onto the new theme's Iris background.
             sidebar = app.query_one(appmod.Sidebar)
             style = sidebar.get_component_rich_style("sidebar--active")
-            assert style.bgcolor is not None and style.bgcolor.triplet.hex.lower() == "#171331"
+            assert style.bgcolor is not None and style.bgcolor.triplet.hex.lower() == "#0f0c1b"
     _run(go())
 
 

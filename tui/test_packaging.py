@@ -75,6 +75,8 @@ def test_standalone_packages_artwork_and_embeds_icon_only_on_windows(tmp_path, m
     (tmp_path / "README.md").write_text("Taskman", encoding="utf-8")
     for name in ("LICENSE", "SECURITY.md"):
         (tmp_path / name).write_text("distribution document: " + name, encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "RELEASE_NOTES.md").write_text("Current release notes", encoding="utf-8")
     (tmp_path / "assets").mkdir()
     for name in ("taskman.png", "taskman.ico"):
         (tmp_path / "assets" / name).write_bytes(b"artwork:" + name.encode())
@@ -97,6 +99,7 @@ def test_standalone_packages_artwork_and_embeds_icon_only_on_windows(tmp_path, m
     else:
         assert "--icon" not in commands[0]
     with zipfile.ZipFile(archive_path) as archive:
+        assert archive.read("taskman/RELEASE_NOTES.md") == (tmp_path / "docs/RELEASE_NOTES.md").read_bytes()
         for name in ("LICENSE", "SECURITY.md"):
             assert archive.read(f"taskman/{name}") == (tmp_path / name).read_bytes()
         for name in ("taskman.png", "taskman.ico"):

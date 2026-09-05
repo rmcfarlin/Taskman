@@ -63,6 +63,7 @@ def standalone(output: Path) -> Path:
     bundle = build_root / "dist" / "taskman"
     for name in ("README.md", "LICENSE", "SECURITY.md"):
         shutil.copy2(ROOT / name, bundle / name)
+    shutil.copy2(ROOT / "docs" / "RELEASE_NOTES.md", bundle / "RELEASE_NOTES.md")
     for name in SOURCE_ASSET_FILES:
         source = ROOT / name
         shutil.copy2(source, bundle / source.name)

@@ -47,6 +47,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: downloads
@@ -70,4 +71,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "Taskman $RELEASE_TAG"
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --notes-file docs/RELEASE_NOTES.md --title "Taskman $RELEASE_TAG"
