@@ -14,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
 
 from .taskman import vault_write_lock
 from .vaults import normalize_folder
@@ -378,6 +379,21 @@ def _remember_push(git: _Git, references: list[tuple[str, str]], head: str) -> N
             pass
 
 
+def _success_message(destination: str, head: str, *, up_to_date: bool) -> str:
+    """Name GitHub when recognized, without exposing a URL or credentials."""
+    if "://" in destination:
+        try:
+            host = urlsplit(destination).hostname
+        except ValueError:
+            host = None
+    else:
+        match = re.match(r"^(?:[^/@:]+@)?([^/:]+):[^\\]", destination)
+        host = match.group(1) if match else None
+    label = "GitHub" if host and host.lower() in {"github.com", "ssh.github.com"} else "Git remote"
+    action = f"{label} is up to date" if up_to_date else f"Pushed to {label}"
+    return f"{action} (commit {head[:8]})."
+
+
 def push_vault(root: "str | Path") -> SyncResult:
     """Commit the vault snapshot and push only its selected existing branch remote."""
     try:
@@ -402,7 +418,9 @@ def push_vault(root: "str | Path") -> SyncResult:
         if pushed.returncode:
             raise GitSyncError("Could not push the vault. Local files and commits are saved; check authentication or remote branch changes, then retry.")
         _remember_push(git, tracking, head)
-        return SyncResult("Pushed vault snapshot to the configured Git remote.", committed, True)
+        up_to_date = any(line.startswith(b"=\t") for line in pushed.stdout.splitlines())
+        return SyncResult(_success_message(repository.destination, head, up_to_date=up_to_date),
+                          committed, True)
     except GitSyncError:
         raise
     except (OSError, ValueError) as error:

@@ -2807,7 +2807,7 @@ class TaskApp(NotesActions, App):
     def _finish_vault_push(self, message: str, failed: bool) -> None:
         self._pushing_vault = False
         self.notify(message, title="Could not push vault" if failed else "Git",
-                    severity="error" if failed else "information", timeout=8, markup=False)
+                    severity="error" if failed else "information", timeout=12, markup=False)
 
     # -- actions --------------------------------------------------------------
     def action_commands(self) -> None:

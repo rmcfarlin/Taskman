@@ -109,7 +109,9 @@ Git must be installed and authenticated already. Taskman reports missing credent
 
 Repositories that use Git LFS or content filters must be pushed with their normal Git tooling.
 
-**Ctrl+S** remains local save confirmation. In an editor, save shortcuts save that draft without publishing. Taskman's Windows console driver preserves Shift on the physical Ctrl+Shift+S keypress. If another terminal cannot distinguish these keys, **Ctrl+K → Push vault** is also available.
+**Ctrl+S** remains local save confirmation. In an editor, save shortcuts save that draft without publishing. Taskman preserves Shift in both the classic Windows console and Windows Terminal, including versions before 1.25. **Ctrl+K → Push vault** is also available in other terminals that cannot distinguish these keys.
+
+For GitHub remotes, a successful result says **Pushed to GitHub** or **GitHub is up to date**, followed by the commit ID. The result stays visible for 12 seconds. A local Markdown save message only confirms files on your computer.
 
 ## Now and scheduling
 

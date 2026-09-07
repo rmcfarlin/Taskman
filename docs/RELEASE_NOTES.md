@@ -2,7 +2,8 @@
 
 Recurring tasks, scheduled work in Now, stable task IDs for automation, and reliable Windows keyboard pushing are now part of Taskman. Your vault stays plain Markdown, with no bulk migration required.
 
-- Fixed physical **Ctrl+Shift+S** in the Windows console. The input driver now retains the native Shift modifier before decoding the key, distinguishing push from local **Ctrl+S** saves.
+- Fixed physical **Ctrl+Shift+S** in the Windows console and Windows Terminal, including versions before 1.25. The input driver requests the Windows keyboard protocol so Shift survives the terminal transport, distinguishing push from local **Ctrl+S** saves.
+- Push results now explicitly name **GitHub** for GitHub remotes, show the commit ID, and distinguish **Pushed** from **up to date**. The result remains visible for 12 seconds.
 - Added **Repeat** to the Dates dialog with presets, typed rules, validation, and **Set recurrence** in the command menu. Due, scheduled, and recurrence changes save atomically with one undo.
 - Completing a recurring task creates its next occurrence above the completed one. Dates retain their offsets; the task's own note is copied, while subtasks stay with the completed task. Each new occurrence gets its own stable ID.
 - Supports daily, weekday, weekly, monthly, and yearly intervals, selected weekdays, first/last day of the month, and completion-based `when done` rules. Unsupported imported rules remain visible and produce a warning on completion without spawning a task.

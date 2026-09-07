@@ -85,6 +85,22 @@ def test_no_change_retry_pushes_existing_commit_without_an_extra_commit(tmp_path
     assert first.pushed and second.pushed and not first.committed and not second.committed
     assert git(root, "rev-parse", "HEAD") == head
     assert git(destination, "rev-parse", "main") == head
+    assert first.message == f"Pushed to Git remote (commit {head[:8]})."
+    assert second.message == f"Git remote is up to date (commit {head[:8]})."
+
+
+@pytest.mark.parametrize("destination,label", [
+    ("https://user:secret@github.com/owner/private.git", "GitHub"),
+    ("git@github.com:owner/private.git", "GitHub"),
+    ("ssh://git@ssh.github.com:443/owner/private.git", "GitHub"),
+    ("https://github.com.example.org/owner/private.git", "Git remote"),
+    ("C:/vault/remote.git", "Git remote"),
+])
+def test_success_message_identifies_github_without_exposing_destination(destination, label):
+    assert sync._success_message(destination, "1234567890abcdef", up_to_date=False) == (
+        f"Pushed to {label} (commit 12345678).")
+    assert sync._success_message(destination, "1234567890abcdef", up_to_date=True) == (
+        f"{label} is up to date (commit 12345678).")
 
 
 def test_same_size_racy_clean_edit_is_included_in_snapshot(tmp_path):
