@@ -86,12 +86,15 @@ def test_busy_push_blocks_duplicates_and_vault_switch_but_allows_navigation(vaul
                 assert app.view == "notes"
                 assert not isinstance(app.screen, ModalScreen)
                 assert app.vault == vault and calls == [vault]
-                assert "already running" in notices(app)
+                status = app.query_one("#status-info")
+                assert status.display and status.has_class("-message")
+                assert "already running" in status.render_line(0).text
                 assert "before opening another vault" in notices(app)
             finally:
                 release.set()
                 await settled(app, pilot)
             assert not app._pushing_vault
+            assert "Pushed vault snapshot" in notices(app)
 
     asyncio.run(go())
 

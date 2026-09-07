@@ -1,3 +1,19 @@
+# Taskman 3.2.0
+
+This release gives tasks and notes more room and adds a GitHub release updater that checks automatically and installs after acceptance.
+
+- Reduced the header to one row, removed redundant counts and navigation hints, and limited the contextual shortcut dock to two rows with **Ctrl+K More** for the full command list. Notes Delete and Undo remain discoverable.
+- Added **Ctrl+B** to show or hide the sidebar for the session. Notes now appears above Projects; medium-width Notes layouts hide navigation before sacrificing the reading pane.
+- Notes use compact title/category rows when space is limited. Resizing preserves selection and active in-note search.
+- Reworked keyboard Help into aligned, wrapping rows with a visible Close control. Dialogs have compact buttons and inputs, clear focus, and visible Save/Cancel controls in small terminals.
+- Routine confirmations appear temporarily in the status row, then restore the current view context. Errors and the 12-second GitHub push result remain prominent.
+- Added a true Light theme, including readable selections, inputs, warnings, and errors. Existing Light settings migrate automatically.
+- Renamed the undated task group to **No due date**, preserving its membership and ordering.
+- Taskman checks for a newer stable release at startup and every six hours while open. Available updates show change notes; background checks stay quiet when current or offline and wait until editing, switching vaults, and pushing have finished.
+- Accept **Update now** once to download, verify, install, and restart automatically. **Later** postpones that version for the session; **Check for updates** in **Ctrl+K** remains available, along with terminal-only `--check-updates`.
+- Windows portable updates verify release digests and file ownership before installation. The installer waits for Taskman to close, retains the previous app, and rolls back failed installation. It preserves the vault and per-user settings. Downloads can be cancelled before installation starts.
+- Earlier portable installs need one manual upgrade to obtain the updater manifest. Source, wheel, macOS, and Linux installations show the GitHub download route.
+
 # Taskman 3.1.0
 
 Notes now support deletion with undo, recent-first sorting, search within long notes, filename renaming with direct link updates, and reusable templates. Existing vaults need no migration.

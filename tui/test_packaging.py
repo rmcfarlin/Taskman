@@ -101,6 +101,11 @@ def test_standalone_packages_artwork_and_embeds_icon_only_on_windows(tmp_path, m
     else:
         assert "--icon" not in commands[0]
     with zipfile.ZipFile(archive_path) as archive:
+        import json
+        manifest = json.loads(archive.read("taskman/.taskman-install.json"))
+        assert manifest["app_id"] == "taskman-vault"
+        assert manifest["version"] == builder.__version__
+        assert set(manifest["files"]) == {name.removeprefix("taskman/") for name in archive.namelist() if name != "taskman/.taskman-install.json"}
         assert archive.read("taskman/RELEASE_NOTES.md") == (tmp_path / "docs/RELEASE_NOTES.md").read_bytes()
         for name in ("LICENSE", "SECURITY.md"):
             assert archive.read(f"taskman/{name}") == (tmp_path / name).read_bytes()

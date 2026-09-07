@@ -49,6 +49,16 @@ async def _rendered_notifications(pilot, app):
     return rendered
 
 
+async def _rendered_status(pilot, app):
+    """Routine confirmations paint the status row without covering content."""
+    await pilot.pause(0.15)
+    status = app.query_one("#status-info")
+    assert status.display and status.has_class("-message")
+    assert status.size.height == 1
+    assert not list(app.screen.query(Toast))
+    return status.render_line(0).text
+
+
 @pytest.mark.parametrize("operation,notice", [
     ("complete", "Done: Review [bold]literal[/bold]"),
     ("add", "Added: New [red]literal[/red] task"),
@@ -60,7 +70,7 @@ async def _rendered_notifications(pilot, app):
     ("note", "Note saved"),
     ("delete", "Task deleted"),
 ])
-def test_task_mutations_render_real_notifications_and_restore_exact_files(
+def test_task_mutations_render_status_and_restore_exact_files(
     runtime_vault, operation, notice
 ):
     async def go():
@@ -96,14 +106,14 @@ def test_task_mutations_render_real_notifications_and_restore_exact_files(
                 await pilot.press("ctrl+s")
             else:
                 await pilot.press("delete", "shift+tab", "enter")
-            assert any(notice in text for text in await _rendered_notifications(pilot, app))
+            assert notice in await _rendered_status(pilot, app)
             changed = _files(runtime_vault)
             assert changed != before
             await pilot.press("u")
-            assert any("Undid:" in text for text in await _rendered_notifications(pilot, app))
+            assert "Undid:" in await _rendered_status(pilot, app)
             assert _files(runtime_vault) == before
             await pilot.press("ctrl+y")
-            assert any("Redid:" in text for text in await _rendered_notifications(pilot, app))
+            assert "Redid:" in await _rendered_status(pilot, app)
             assert _files(runtime_vault) == changed
             await pilot.press("q")
     asyncio.run(go())
@@ -141,10 +151,10 @@ def test_external_edit_conflict_renders_warning_without_overwriting(runtime_vaul
         async with app.run_test(size=(100, 30), notifications=True) as pilot:
             await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("space")
-            await _rendered_notifications(pilot, app)
+            await _rendered_status(pilot, app)
             if restore == "redo":
                 await pilot.press("u")
-                await _rendered_notifications(pilot, app)
+                await _rendered_status(pilot, app)
             path.write_bytes(path.read_bytes() + b"\nExternal [draft] context.\n")
             external = _files(runtime_vault)
             await pilot.press("u" if restore == "undo" else "ctrl+y")
@@ -186,7 +196,7 @@ def test_open_dialog_survives_terminal_resize_and_clock_update(runtime_vault, ke
     asyncio.run(go())
 
 
-def test_note_resize_keep_editing_discard_and_save_use_real_notifications(runtime_vault):
+def test_note_resize_keep_editing_discard_and_save_use_status(runtime_vault):
     async def go():
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         before = _files(runtime_vault)
@@ -220,7 +230,7 @@ def test_note_resize_keep_editing_discard_and_save_use_real_notifications(runtim
             await pilot.press("n")
             await _type(pilot, " Saved addition.")
             await pilot.press("ctrl+s")
-            assert any("Note saved" in text for text in await _rendered_notifications(pilot, app))
+            assert "Note saved" in await _rendered_status(pilot, app)
             assert "Saved addition." in (runtime_vault / "Tasks/Inbox.md").read_text(encoding="utf-8")
             await pilot.press("q")
     asyncio.run(go())

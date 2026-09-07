@@ -12,6 +12,18 @@ from tui.vaults import initialize_vault
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     taskman._utf8_stdout()
+    # Internal helper mode must never fall through to vault discovery or the
+    # normal UI. The updater validates the plan, ownership, and runtime path.
+    if raw and raw[0] == "--apply-update":
+        if len(raw) != 2:
+            print("Taskman updater: exactly one update plan is required.", file=sys.stderr)
+            return 2
+        from tui import updater
+        try:
+            return updater.apply_update(Path(raw[1]))
+        except (updater.UpdateError, OSError, ValueError) as error:
+            print(f"Taskman updater: {error}", file=sys.stderr)
+            return 1
     parser = cli.ArgumentParser(prog="taskman", allow_abbrev=False,
                                 description="Your tasks, in any folder. Markdown files stay yours.")
     parser.add_argument("folder", nargs="?", help="folder to open (same as --vault)")
@@ -20,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--init", metavar="PATH", help="create missing vault structure without replacing existing files")
     parser.add_argument("--theme", metavar="NAME", help="theme name, or 'list'")
     parser.add_argument("--version", action="version", version=f"Taskman {__version__}")
+    parser.add_argument("--check-updates", action="store_true", help="check GitHub for a newer stable Taskman release")
     cli.add_arguments(parser, include_vault=False)
     try:
         args = parser.parse_args(raw)
@@ -27,6 +40,22 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("use either a folder argument or --vault")
         vault = args.vault or args.folder
         plain = cli.requested(args)
+        if args.check_updates:
+            if vault or plain or args.open_vault or args.theme or args.init:
+                parser.error("--check-updates is a separate command")
+            from tui import updater
+            try:
+                release = updater.check_for_update(__version__)
+            except updater.UpdateError as error:
+                print(f"Could not check for updates: {error}", file=sys.stderr)
+                return 1
+            if release is None:
+                print(f"Taskman {__version__}: no newer stable release available.")
+            else:
+                print(f"Taskman {release.version} is available (installed: {__version__}).")
+                print(release.html_url)
+                print("Open Ctrl+K > Check for updates in Taskman to download and install.")
+            return 0
         if args.init and (vault or plain or args.open_vault or args.theme):
             parser.error("--init PATH is a separate command")
         if args.open_vault and plain:

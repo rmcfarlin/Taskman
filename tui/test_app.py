@@ -49,7 +49,7 @@ def test_resolve_theme_precedence(monkeypatch):
     assert appmod.resolve_theme("taskman-rcm") == "taskman-dark-teal"  # legacy preference
     assert appmod.resolve_theme(None) == "taskman-moss"               # then the saved file
     monkeypatch.setenv("TASKMAN_THEME", "catppuccin-latte")
-    assert appmod.resolve_theme(None) == "catppuccin-latte"           # env beats file
+    assert appmod.resolve_theme(None) == "taskman-light"              # legacy Light migrates
     monkeypatch.setattr(appmod, "read_theme_file", lambda path=None: "bogus")
     monkeypatch.delenv("TASKMAN_THEME")
     assert appmod.resolve_theme(None) == appmod.DEFAULT_THEME        # invalid falls back
@@ -214,12 +214,13 @@ def test_sidebar_browses_views_and_projects_one_step_at_a_time(tmp_path, monkeyp
             await pilot.pause()
             assert sidebar.has_focus
             seen = []
-            for _ in range(len(appmod.SIDEBAR_VIEWS)):                # 6 more views + 1st project
+            for _ in range(len(appmod.SIDEBAR_VIEWS) + 1):            # 6 more views, Notes, 1st project
                 await pilot.press("down")
                 await pilot.pause()
                 seen.append((app.view, app.project))
             assert seen[:6] == [(v, "") for _, v, _ in appmod.SIDEBAR_VIEWS[1:]]
-            assert seen[6] == ("project", "Alpha")                    # first project, not second
+            assert seen[6] == ("notes", "")
+            assert seen[7] == ("project", "Alpha")                    # first project, not second
             assert sidebar.options[sidebar.highlighted].id == "proj:Alpha"
             await pilot.press("down")
             await pilot.pause()
@@ -326,7 +327,7 @@ def test_inspector_pane_toggles_and_shows_subtasks(tmp_path, monkeypatch):
             kids = insp.query_one("#ins-kids")
             assert [o.id for o in kids.options] == ["k:Tasks/Inbox.md:5", "k:Tasks/Inbox.md:6"]
             assert "1/2" in str(insp.query_one("#ins-subhead").render())
-            assert "inspect open" in str(app.query_one("#status-right").render())
+            assert str(app.query_one("#status-right").render()) == f"{tl.cursor_ordinal}/{tl.task_count}"
             # Tab first reaches the scrollable inspector, then its child list.
             await pilot.press("tab")
             await pilot.pause()
@@ -343,7 +344,7 @@ def test_inspector_pane_toggles_and_shows_subtasks(tmp_path, monkeypatch):
             await pilot.press("escape")
             await pilot.pause()
             assert not insp.display and tl.has_focus
-            assert "inspect closed" in str(app.query_one("#status-right").render())
+            assert str(app.query_one("#status-right").render()) == f"{tl.cursor_ordinal}/{tl.task_count}"
     _run(go())
 
 
@@ -394,8 +395,8 @@ def test_ctrl_s_confirms_local_autosave_without_executing_vault_scripts(tmp_path
             await pilot.press("ctrl+s")                              # what most terminals send
             await pilot.pause()
             assert (root / task.file).read_bytes() == saved
-            assert any("All changes saved to Markdown" in toast.render().plain
-                       for toast in app.screen.query(Toast))
+            assert "All changes saved to Markdown" in app.query_one("#status-info").render_line(0).text
+            assert not list(app.screen.query(Toast))
     _run(go())
 
 

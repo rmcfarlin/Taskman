@@ -14,6 +14,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tui import __version__
+from tui.updater import write_install_manifest
 
 SOURCE_ROOT_FILES = ("README.md", "LICENSE", "CONTRIBUTING.md", "SECURITY.md",
                      "pyproject.toml", "setup.py", "MANIFEST.in", ".gitignore")
@@ -75,6 +76,7 @@ def standalone(output: Path) -> Path:
     system = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}[platform.system()]
     machine = platform.machine().lower()
     arch = {"amd64": "x64", "x86_64": "x64", "aarch64": "arm64"}.get(machine, machine)
+    write_install_manifest(bundle, __version__, system=platform.system(), machine=machine)
     path = output / f"taskman-{__version__}-{system}-{arch}.zip"
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for source in sorted(bundle.rglob("*")):

@@ -346,7 +346,7 @@ def test_sections_bucket_trees_by_most_urgent_match(tmp_path):
     tasks = tm.load_all(_tree_vault(tmp_path))
     day = dt.date(2026, 9, 4)
     secs = tm.sections(tm.view_tasks(tasks, "all", day), "all", day)
-    assert [s.title for s in secs] == ["Today", "No date"]
+    assert [s.title for s in secs] == ["Today", "No due date"]
     today = secs[0]
     assert [n.task.description for n in today.nodes] == ["Parent", "Kid one", "Kid two", "Grandkid"]
     assert today.count == 4 and secs[1].count == 1
@@ -378,7 +378,7 @@ def test_plain_output_marks_overdue_and_sections(tmp_path, capsys):
     assert tm.cmd_plain(root, "all", day=dt.date(2026, 9, 10)) == 0
     out = capsys.readouterr().out
     assert "== Overdue (4) ==" in out and "OVERDUE" in out
-    assert "== No date (1) ==" in out
+    assert "== No due date (1) ==" in out
     assert tm.cmd_plain(root, "projects") == 0
 
 

@@ -6,7 +6,7 @@ A keyboard-first task and notes manager for folders of Markdown files. Open a fo
 
 ## Download and run
 
-**Windows:** download the `taskman-3.1.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.1.0), extract the entire archive, and run:
+**Windows:** download the `taskman-3.2.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.2.0), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-3.1.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-3.2.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -73,7 +73,7 @@ Setup can create a new folder or fill in missing structure in an existing one. O
 
 ## Keyboard essentials
 
-The bottom shortcut bar shows the actions available where you are working and wraps to fit the terminal. Dark Teal is the default theme; press **m** to preview the other themes, including Light and High contrast.
+The bottom shortcut bar shows common actions in up to two rows. **Ctrl+K More** opens the complete command list; **h** or **F1** opens the keyboard guide. Dialogs show their own controls. Dark Teal is the default theme; press **m** to preview the other themes, including Light and High contrast.
 
 Press **/** to open Find. It stays visible while a filter is active; **Enter** or **↓** returns to the results, and **Esc** clears the filter and closes Find.
 
@@ -85,6 +85,7 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | Esc | Close a dialog or return from search |
 | Ctrl+O | Open a vault |
 | Ctrl+K | Search commands |
+| Ctrl+B | Show or hide the sidebar for this session |
 | / | Find tasks |
 | a / e | Add / edit task |
 | Space | Complete or reopen task |
@@ -98,6 +99,18 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | q | Quit |
 
 Letter shortcuts apply while browsing tasks; typing in a text field edits the field. Use a terminal with a Unicode-capable font for the best display.
+
+## Application updates
+
+Starting with 3.2.0, Taskman checks GitHub for a newer stable release at startup and every six hours while open. Available updates show their change notes with **Update now** and **Later**. Accept **Update now** once to download, verify, install, and restart into the same vault automatically. **Later** postpones that version for the rest of the session; **Ctrl+K → Check for updates** lets you return to it whenever you want.
+
+Background checks stay quiet when you are current or offline. An update prompt waits until you finish editing and any vault switch or push has completed. You can cancel while downloading. Your tasks, notes, and settings stay in their existing locations. **Ctrl+Shift+S** continues to push vault changes to the vault's registered Git remote.
+
+Automatic installation supports the Windows portable bundle when it contains `.taskman-install.json` and its application files have not been modified. Keep your vault outside that application folder. Earlier portable versions need one manual upgrade by extracting the complete new bundle. Source installations, wheels, macOS, and Linux use the **GitHub** button to download a release and follow their existing installation method.
+
+The updater verifies GitHub's SHA-256 digests, the release checksum list, and every packaged file before installation. It retains the previous application under `.taskman-updates` beside the app folder and restores it if installation fails. If Windows cannot reopen the app, use your usual shortcut; the next launch shows the saved update result. Do not remove the update folder while installation is running.
+
+For a read-only check from a terminal, run `taskman --check-updates`.
 
 ## Push to an existing Git remote
 

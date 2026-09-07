@@ -18,8 +18,10 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
+
+from .dialog_style import COMPACT_DIALOG_CSS
 
 
 @dataclass(frozen=True)
@@ -135,7 +137,7 @@ class CommandScreen(ModalScreen[str | None]):
         max-height: 94%;
         border: round $accent;
         background: $surface;
-        padding: 1;
+        padding: 0 1;
     }
     CommandScreen #command-heading { height: 1; }
     CommandScreen #command-title {
@@ -154,12 +156,8 @@ class CommandScreen(ModalScreen[str | None]):
         text-overflow: ellipsis;
     }
     CommandScreen #command-input {
-        height: 3;
         margin-top: 1;
-        background: $background;
-        border: tall $primary;
     }
-    CommandScreen #command-input:focus { border: tall $accent; }
     CommandScreen #command-results {
         height: 1fr;
         min-height: 1;
@@ -185,11 +183,11 @@ class CommandScreen(ModalScreen[str | None]):
         color: $text;
     }
     CommandScreen #command-hints {
-        height: 1;
+        height: 1; width: 1fr;
         color: $text-muted;
-        text-align: center;
     }
-    """
+    CommandScreen #command-footer { height: 1; }
+    """ + COMPACT_DIALOG_CSS
 
     def __init__(self, commands: list[Command], context: str = "") -> None:
         super().__init__()
@@ -201,17 +199,19 @@ class CommandScreen(ModalScreen[str | None]):
             raise ValueError("Command IDs must be unique")
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="command-dialog"):
+        with Vertical(id="command-dialog", classes="compact-dialog"):
             with Horizontal(id="command-heading"):
                 yield Static("Commands", id="command-title")
                 yield Static("", id="command-count")
             yield Static(self.context, id="command-context", markup=False)
-            yield Input(placeholder="Search actions, views, or shortcuts…", id="command-input")
+            yield Input(placeholder="Search actions, views, or shortcuts…", compact=True, id="command-input")
             results = OptionList(id="command-results", compact=True)
             results.can_focus = False
             yield results
             yield Static("", id="command-description", markup=False)
-            yield Static("↑↓ choose · Enter run · Esc close", id="command-hints")
+            with Horizontal(id="command-footer"):
+                yield Static("↑↓ choose · Enter run · Esc close", id="command-hints")
+                yield Button("Close", id="command-close", tooltip="Close commands · Esc")
 
     def on_mount(self) -> None:
         self.query_one("#command-context").display = bool(self.context)
@@ -274,6 +274,11 @@ class CommandScreen(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    @on(Button.Pressed, "#command-close")
+    def _close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_cancel()
 
     def action_select_query(self) -> None:
         self.query_one("#command-input", Input).action_select_all()

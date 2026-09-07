@@ -83,18 +83,27 @@ class NotesActions:
             active = [self.note_category, f"#{self.note_tag}" if self.note_tag else "", self.note_project]
             self._summary += "".join(f" · {label}" for label in active if label)
         self._update_crumb()
-        filters = [self.note_category or "All categories", f"#{self.note_tag}" if self.note_tag else "",
+        filters = [f"{len(matches)} notes", self.note_category or "All categories", f"#{self.note_tag}" if self.note_tag else "",
                    self.note_project, f'“{self.search_query}”' if self.search_query else "",
                    "Recently modified" if self.note_sort == "modified" else "Title order"]
         self.query_one("#status-view", Label).update("NOTES")
-        self.query_one("#status-info", Label).update(Text(" · ".join(f for f in filters if f)))
-        skipped = len(self.notes_store.errors)
-        self.query_one("#status-right", Label).update(
-            f"{skipped} unreadable · Ctrl+K details" if skipped else "Markdown · saved in Notes/")
+        self._set_status_info(Text(" · ".join(f for f in filters if f)))
+        self._reference_position()
         self._context_hint()
 
     def _reference_selected(self, event: NotesWorkspace.Selected) -> None:
         self._selected_note_file = event.note.file if event.note else ""
+        self._reference_position()
+
+    def _reference_position(self) -> None:
+        if self.view != "notes":
+            return
+        workspace = self.query_one(NotesWorkspace)
+        files = list(workspace._notes)
+        ordinal = files.index(self._selected_note_file) + 1 if self._selected_note_file in files else 0
+        skipped = len(self.notes_store.errors)
+        self.query_one("#status-right", Label).update(
+            f"{skipped} unreadable · Ctrl+K" if skipped else f"{ordinal}/{len(files)}")
 
     def _reference_activated(self, event: NotesWorkspace.Activated) -> None:
         self._edit_reference(event.note)

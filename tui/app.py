@@ -4,11 +4,11 @@ Everything task-shaped lives in taskman.py (stdlib only). This file is
 pure presentation: layout, key handling, dialogs, themes.
 
 Layout (one screen, no wasted rows)
-  topbar ........... ◆ Taskman · vault — N open · due ≤7d · overdue     theme · clock
+  topbar ........... ◆ Taskman · vault · view     theme · clock
   sidebar | list | inspect
                      views + projects (counts) | the task table | INSPECT
                      pane (i / Enter toggles): facts, SUB-TASKS, NOTE
-  statusbar ........ VIEW badge · counts                 cursor/total · inspect
+  statusbar ........ VIEW badge · counts                 cursor/total · contextual hint
   footer ........... key hints — every key here is also a clickable button
 
 The table is a Line-API widget (TaskList): it renders only the visible
@@ -76,6 +76,7 @@ try:  # `python -m tui` (package) vs `python tui/app.py` (script)
     from tui.notes import NotesStore, NoteConflict
     from tui.notes_ui import NotesWorkspace
     from tui.notes_actions import NotesActions
+    from tui.update_actions import UpdateActions
 except ImportError:  # pragma: no cover -- direct-script fallback
     import taskman as tm  # type: ignore[no-redef]
     from taskman import Task  # type: ignore[no-redef]
@@ -90,6 +91,7 @@ except ImportError:  # pragma: no cover -- direct-script fallback
     from notes import NotesStore, NoteConflict
     from notes_ui import NotesWorkspace
     from notes_actions import NotesActions
+    from tui.update_actions import UpdateActions
 
 # Views shown in the sidebar: (hotkey, view-name, label). Order = 1..7 keys.
 SIDEBAR_VIEWS: tuple[tuple[str, str, str], ...] = (
@@ -156,8 +158,8 @@ def _fg_only(style: Style) -> Style:
 def _family(name: str, *, primary: str, secondary: str, accent: str, foreground: str,
             background: str, surface: str, panel: str, warning: str, error: str,
             success: str, muted: str, primary_muted: str, border: str,
-            cursor_text: str, text_primary: str | None = None) -> Theme:
-    """Build one dark theme. ``primary`` is the structure color (borders, the
+            cursor_text: str, text_primary: str | None = None, dark: bool = True) -> Theme:
+    """Build one Taskman family theme. ``primary`` is the structure color (borders, the
     inverted cursor, badges); ``accent`` is the focus/title color;
     ``cursor_text`` is the text color drawn on the cursor bar (dark on a
     bright primary, white on a mid-blue one like Darcula's). ``text_primary``
@@ -177,7 +179,7 @@ def _family(name: str, *, primary: str, secondary: str, accent: str, foreground:
     if text_primary:
         variables["text-primary"] = text_primary
     return Theme(
-        name=name, dark=True,
+        name=name, dark=dark,
         primary=primary, secondary=secondary, accent=accent, foreground=foreground,
         background=background, surface=surface, panel=panel, boost=primary,
         warning=warning, error=error, success=success,
@@ -237,15 +239,27 @@ DARK_THEMES: tuple[tuple[Theme, str], ...] = (
      "Dark Teal"),
 )
 
+LIGHT_THEME = _family(
+    "taskman-light", dark=False, primary="#176b68", secondary="#356f70", accent="#075e5b",
+    foreground="#172d31", background="#f6f5ef", surface="#eeeee5", panel="#e0e9e4",
+    warning="#865800", error="#ad2635", success="#246f42", muted="#516469",
+    primary_muted="#adc7c1", border="#96b5af", cursor_text="#ffffff", text_primary="#125e5b",
+)
+# Explicit semantic text colors avoid light-theme blends that wash out dates.
+LIGHT_THEME.variables.update({
+    "text-warning": "#865800", "text-error": "#ad2635", "text-success": "#246f42",
+    "text-accent": "#075e5b", "text-disabled": "#68767a",
+})
+
 # (theme_name, friendly_label, is_dark). Order = picker order.
 THEMES: tuple[tuple[str, str, bool], ...] = tuple(
     (theme.name, label, True) for theme, label in DARK_THEMES
 ) + (
-    ("catppuccin-latte", "Light", False),
+    ("taskman-light", "Light", False),
     ("high-contrast", "High contrast", True),
 )
 DEFAULT_THEME = "taskman-dark-teal"
-THEME_ALIASES = {"taskman-rcm": "taskman-dark-teal"}
+THEME_ALIASES = {"taskman-rcm": "taskman-dark-teal", "catppuccin-latte": "taskman-light"}
 HIGH_CONTRAST = "high-contrast"
 THEME_FILE = "theme.txt"  # compatibility for callers passing an explicit file
 
@@ -259,7 +273,8 @@ def theme_swatch(name: str) -> Text:
     """Four color blocks — primary, accent, warning, error — for the picker,
     so you can see a theme before you try it."""
     from textual.theme import BUILTIN_THEMES
-    theme = next((t for t, _ in DARK_THEMES if t.name == name), None)
+    name = THEME_ALIASES.get(name, name)
+    theme = LIGHT_THEME if name == LIGHT_THEME.name else next((t for t, _ in DARK_THEMES if t.name == name), None)
     if theme is None and name == HIGH_CONTRAST:
         theme = high_contrast_theme()
     if theme is None:
@@ -338,6 +353,7 @@ def resolve_theme(explicit: str | None = None) -> str:
 
 
 def theme_is_dark(name: str) -> bool:
+    name = THEME_ALIASES.get(name, name)
     return next((t[2] for t in THEMES if t[0] == name), True)
 
 
@@ -975,6 +991,8 @@ class Sidebar(OptionList):
                 self._item(VIEW_ICON[name], label, view_counts.get(name, 0), active,
                            hot=name == "overdue", hotkey=key),
                 id=f"view:{name}"))
+        opts.append(Option(self._item("▤", "Notes", note_count, view == "notes", hotkey="8"),
+                           id="view:notes"))
         opts.append(None)
         opts.append(Option(Text("PROJECTS", self._s("sidebar--heading")),
                            id="h:projects", disabled=True))
@@ -987,10 +1005,6 @@ class Sidebar(OptionList):
                 self._item(VIEW_ICON["project"], name,
                            project_counts.get(name.casefold(), 0), active),
                 id=f"proj:{name}"))
-        opts.extend([None, Option(Text("REFERENCE", self._s("sidebar--heading")),
-                                 id="h:reference", disabled=True),
-                     Option(self._item("▤", "Notes", note_count, view == "notes", hotkey="8"),
-                            id="view:notes")])
         self.set_options(opts)
         # NB: index into self.options (separators are not options), not opts.
         active_id = (f"proj:{project}" if project else f"view:{view}").casefold()
@@ -1004,6 +1018,19 @@ class TaskInput(Input):
     """Use the familiar select-all shortcut in every single-line field."""
 
     BINDINGS = [Binding("ctrl+a", "select_all", "Select all", show=False)]
+
+
+class FormError(Label):
+    """Validation takes a row only when there is a message to read."""
+
+    def on_mount(self) -> None:
+        content = self.content
+        self.display = bool((content.plain if isinstance(content, Text) else str(content)).strip())
+
+    def update(self, content="", *, layout: bool = True) -> None:
+        plain = content.plain if isinstance(content, Text) else str(content)
+        self.display = bool(plain.strip())
+        super().update(content, layout=layout)
 
 
 class SearchInput(TaskInput):
@@ -1283,7 +1310,7 @@ class AddScreen(ModalScreen["dict | None"]):
             yield Label("Task", classes="field first")
             yield TaskInput(value=self._initial_text, placeholder="What needs doing?  #tags and task emoji work here",
                         id="text")
-            yield Label("", id="form-error", classes="form-error")
+            yield FormError("", id="form-error", classes="form-error")
             if not self._parent_name:
                 yield Label("Project (optional · → accepts suggestion)",
                             classes="field")
@@ -1352,7 +1379,7 @@ class EditScreen(ModalScreen["str | None"]):
             dlg.border_title = "Edit task text"
             dlg.border_subtitle = "Enter = save · Esc = cancel"
             yield TaskInput(value=self._initial, id="text")
-            yield Label("", id="form-error", classes="form-error")
+            yield FormError("", id="form-error", classes="form-error")
             with Horizontal(classes="btns"):
                 yield Button("Save", variant="primary", id="ok")
                 yield Button("Cancel", id="cancel")
@@ -1407,11 +1434,12 @@ class DatesScreen(ModalScreen[bool | None]):
     ]
 
     def __init__(self, due: dt.date | None = None, scheduled: dt.date | None = None,
-                 *, recurrence: str = "", start: dt.date | None = None,
+                 *, recurrence: str = "", start: dt.date | None = None, task_name: str = "",
                  focus_repeat: bool = False,
                  save: Callable[[dt.date | None, dt.date | None, str], None] | None = None) -> None:
         super().__init__()
         self._current = due
+        self._task_name = task_name
         self._scheduled = scheduled
         self._recurrence = recurrence
         self._start = start
@@ -1424,7 +1452,7 @@ class DatesScreen(ModalScreen[bool | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dlg", classes="dates") as dlg:
-            dlg.border_title = "Dates"
+            dlg.border_title = Text("Dates" + (f" — {self._task_name}" if self._task_name else ""))
             dlg.border_subtitle = "Enter / Ctrl+S save · Esc cancel"
             yield Label("today · tomorrow · mon · +7 · YYYY-MM-DD · clear", id="date-help", classes="field first")
             yield Label("Due — deadline", id="due-label", classes="field")
@@ -1444,7 +1472,7 @@ class DatesScreen(ModalScreen[bool | None]):
                 yield TaskInput(value=self._recurrence, placeholder="none / every week / every month on the last",
                                 id="repeat")
                 yield Button("Presets", id="repeat-presets")
-            yield Label("", id="form-error", classes="form-error")
+            yield FormError("", id="form-error", classes="form-error")
             with Horizontal(classes="btns"):
                 yield Button("Save", variant="primary", id="ok")
                 yield Button("Cancel", id="cancel")
@@ -1528,7 +1556,7 @@ class PickScreen(ModalScreen["str | None"]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
-    def __init__(self, title: str, options: list[tuple[str, Text]],
+    def __init__(self, title: str | Text, options: list[tuple[str, Text]],
                  current: str | None = None, hint: str = "Enter = choose · Esc = cancel") -> None:
         super().__init__()
         self._title = title
@@ -1588,7 +1616,7 @@ class ProjectScreen(ModalScreen["str | None"]):
             dlg.border_title = Text(f"Project — {self._task_title[:44]}")
             dlg.border_subtitle = "↑↓ move · Enter = choose · Esc = cancel"
             yield TaskInput(placeholder="Type to filter — or a new name to create it", id="filter")
-            yield Label("", id="form-error", classes="form-error")
+            yield FormError("", id="form-error", classes="form-error")
             yield OptionList(id="opts")
 
     def on_mount(self) -> None:
@@ -1856,6 +1884,7 @@ class HelpScreen(ModalScreen[None]):
             ("f  or  /", "Find — Esc clears, ↓ or Enter jumps back to the list"),
             ("i  or  Enter", "Inspect — open/close the right-hand pane (facts, sub-tasks, note)"),
             ("r", "Rescan the vault (files edited in Obsidian show up)"),
+            ("Ctrl+B", "Show or hide the sidebar; number keys and Commands still reach every view"),
         )),
         ("Tasks", (
             ("u / Ctrl+Z", "Undo the last task change (this session)"),
@@ -1913,10 +1942,9 @@ class HelpScreen(ModalScreen[None]):
                 for section, keys in self.SECTIONS:
                     yield Label(section, classes="sect")
                     for k, what in keys:
-                        line = Text()
-                        line.append(f"{k:<17}", "bold")
-                        line.append(what)
-                        yield Static(line, classes="key")
+                        with Horizontal(classes="help-row"):
+                            yield Static(Text(k, style="bold"), classes="help-key")
+                            yield Static(Text(what), classes="help-description")
             with Horizontal(classes="btns"):
                 yield Button("Close", variant="primary", id="ok")
 
@@ -1962,7 +1990,7 @@ class OpeningVaultScreen(ModalScreen):
         self.app.cancel_vault_open()
 
 
-class TaskApp(NotesActions, App):
+class TaskApp(UpdateActions, NotesActions, App):
     """Markdown-native task manager for the C:\\Tasks vault."""
 
     ENABLE_COMMAND_PALETTE = False
@@ -1971,7 +1999,7 @@ class TaskApp(NotesActions, App):
     ModalScreen { align: center middle; background: $background 60%; }
 
     /* top bar */
-    #topbar { height: 3; background: $background; padding: 0 2; align-vertical: middle; border-bottom: solid $primary-muted; }
+    #topbar { height: 1; background: $background; padding: 0 1; align-vertical: middle; }
     #topbar.-compact { height: 1; border-bottom: none; }
     #brand { width: auto; color: $text-accent; text-style: bold; }
     #crumb { width: 1fr; color: $text-muted; padding: 0 2; content-align: center middle; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -1997,31 +2025,37 @@ class TaskApp(NotesActions, App):
 
     /* status bar */
     #statusbar { height: 1; background: $background; }
-    #status-view { width: auto; padding: 0 1; background: $primary; color: $block-cursor-foreground; text-style: bold; }
-    #status-info { width: 1fr; padding: 0 1; color: $text-muted; }
-    #status-right { width: auto; padding: 0 1; color: $text-muted; }
-    #contextbar { height: 1; width: 1fr; padding: 0 2; color: $text-muted; background: $background; text-wrap: nowrap; text-overflow: ellipsis; }
+    #status-view { width: auto; max-width: 25%; text-wrap: nowrap; text-overflow: ellipsis; padding: 0 1; background: $primary; color: $block-cursor-foreground; text-style: bold; }
+    #status-info { width: 1fr; min-width: 1; padding: 0 1; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
+    #status-info.-message { color: $foreground; text-style: bold; }
+    #status-right { width: auto; max-width: 35%; text-wrap: nowrap; text-overflow: ellipsis; padding: 0 1; color: $text-muted; }
+    #contextbar { display: none; height: 1; width: 1fr; padding: 0 2; color: $text-muted; background: $background; text-wrap: nowrap; text-overflow: ellipsis; }
     #shortcuts { background: $background; }
 
     /* dialogs */
     #dlg {
         width: 70; max-width: 96%; height: auto; max-height: 94%; overflow-y: auto;
-        background: $surface; border: round $accent; padding: 1 2;
+        background: $surface; border: round $accent; padding: 0 1;
         border-title-color: $text-accent; border-title-style: bold;
         border-subtitle-color: $text-muted;
     }
     #dlg .field { color: $text-muted; margin-top: 1; width: 1fr; height: auto; }
     #dlg .field.first { margin-top: 0; }
-    #dlg Input { margin-top: 0; }
+    #dlg Input { margin-top: 0; height: 1; border: none; background: $panel; padding: 0 1; }
+    #dlg Input:focus { background: $primary 25%; text-style: bold; }
     #dlg OptionList { height: auto; max-height: 14; margin-top: 1; border: round $primary-muted; }
     #dlg OptionList.first { margin-top: 0; }
     #dlg OptionList:focus { border: round $accent; }
-    #dlg .btns { height: 3; align: right middle; margin-top: 1; }
-    #dlg .btns Button { margin-left: 1; min-width: 8; }
+    #dlg .btns { height: 1; align: right middle; margin-top: 1; }
+    #dlg .btns Button { height: 1; border: none; margin-left: 1; min-width: 8; background: $panel; }
+    #dlg .btns Button.-primary { background: $primary; color: $block-cursor-foreground; }
+    #dlg .btns Button:focus { text-style: bold reverse; }
     #dlg .btns.quick { align: left middle; }
     #dlg .btns.quick Button { margin-left: 0; margin-right: 1; }
     #dlg .sect { color: $text-accent; text-style: bold; margin-top: 1; }
-    #dlg .key { margin: 0 0 1 0; }
+    #dlg .help-row { height: auto; min-height: 1; }
+    #dlg .help-key { width: 18; height: auto; color: $text-accent; }
+    #dlg .help-description { width: 1fr; height: auto; }
     #dlg .hint { color: $text-muted; margin-top: 1; }
     #dlg .form-error { height: auto; color: $text-error; }
     #dlg.dates { padding: 0 1; }
@@ -2034,9 +2068,14 @@ class TaskApp(NotesActions, App):
     #dlg.dates #repeat { width: 1fr; }
     #dlg.dates #repeat-presets { height: 1; border: none; min-width: 9; width: 9; margin-left: 1; }
     #dlg.help { width: 92; height: 90%; overflow-y: hidden; }
-    #help-content { height: 1fr; padding: 0 1; border: none; }
+    #help-content { height: 1fr; padding: 0 1; border: none; scrollbar-size-vertical: 1; }
     #help-content:focus { border-left: solid $accent; }
     #dlg.themes { width: 60; }
+
+    Toast { background: $panel; color: $foreground; padding: 0 1; }
+    Toast.-information { border-left: wide $accent; }
+    Toast.-warning { border-left: wide $warning; }
+    Toast.-error { border-left: wide $error; }
 
     /* note editor: a real text field, most of the screen */
     #dlg.note { width: 96; height: 80%; min-height: 16; }
@@ -2049,6 +2088,7 @@ class TaskApp(NotesActions, App):
     BINDINGS = [
         Binding("ctrl+k", "commands", "Commands", key_display="ctrl+k", priority=True),
         Binding("ctrl+o", "open_vault", "Open Vault", priority=True),
+        Binding("ctrl+b", "toggle_sidebar", "Toggle sidebar", show=False),
         Binding("colon", "commands", "Commands", show=False),
         Binding("a", "add", "Add"),
         Binding("e", "edit", "Edit"),
@@ -2114,6 +2154,7 @@ class TaskApp(NotesActions, App):
         self.history = History(self.vault)
         self._opening_vault = False
         self._pushing_vault = False
+        self._init_update_state()
         self._open_generation = 0
         self._command_target: Task | None = None
         self._inspected_task: Task | None = None
@@ -2125,9 +2166,15 @@ class TaskApp(NotesActions, App):
         self._display_date = dt.date.today()
         self.search_query = ""
         self._context_ids: set[str] = set()
-        self._summary = ""            # "17 open · 3 due ≤7d · 2 overdue" for the top bar
+        self._summary = ""
+        self._sidebar_hidden = False
+        self._status_info: str | Text = ""
+        self._status_generation = 0
+        self._status_message_active = False
+        self._status_timer = None
         for dark_theme, _label in DARK_THEMES:
             self.register_theme(dark_theme)
+        self.register_theme(LIGHT_THEME)
         self.register_theme(high_contrast_theme())
         self.theme_name = resolve_theme(theme)
         self.theme = self.theme_name
@@ -2136,16 +2183,18 @@ class TaskApp(NotesActions, App):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if self._opening_vault and action != "quit":
             return False
-        if not self._vault_ready and action not in {"open_vault", "quit", "commands", "help", "theme"}:
+        if not self._vault_ready and action not in {"open_vault", "quit", "commands", "help", "theme", "check_updates"}:
             return False
         # Editing a search or a text field must never restore task files.
         if action in ("undo", "redo") and isinstance(self.focused, (Input, TextArea)):
             return False
         if isinstance(self.screen, ModalScreen) and action in {
                 "new_reference", "task_from_reference", "notes", "link_reference", "linked_references",
-                "new_reference_template", "edit_note_template", "find_in_note", "rename_reference",
+                "new_reference_template", "edit_note_template", "find_in_note", "rename_reference", "toggle_sidebar",
                 "delete_reference", "note_sort",
-                "push_vault"}:
+                "push_vault", "check_updates"}:
+            return False
+        if action == "check_updates" and self._pushing_vault:
             return False
         if action in {"find_in_note", "rename_reference", "delete_reference", "note_sort"}:
             if self.view != "notes":
@@ -2161,6 +2210,7 @@ class TaskApp(NotesActions, App):
     def preview_theme(self, name: str) -> None:
         """Apply a theme to everything on screen without remembering it
         (the picker calls this as you move; Esc calls it with the original)."""
+        name = THEME_ALIASES.get(name, name)
         if name not in [t[0] for t in THEMES]:
             return
         self.theme_name = name
@@ -2172,6 +2222,7 @@ class TaskApp(NotesActions, App):
 
     def set_theme(self, name: str, persist: bool = True) -> None:
         """Apply a theme now and remember it in per-user settings."""
+        name = THEME_ALIASES.get(name, name)
         if name not in [t[0] for t in THEMES]:
             return
         self.preview_theme(name)
@@ -2233,13 +2284,16 @@ class TaskApp(NotesActions, App):
         if bars:
             # Textual assumes a one-line footer. Keep notifications above our
             # wrapping dock, status, and navigation hints at every width.
-            bottom = bars[0].outer_size.height + 2
+            bottom = bars[0].outer_size.height + 1
             for screen in self.screen_stack:
                 for rack in screen.query("#textual-toastrack"):
                     rack.styles.margin = (0, 0, bottom, 0)
 
     def on_mount(self) -> None:
         self.title = "Taskman"
+        # Closing a modal can restore an already-focused widget without a new
+        # focus event. Screen changes must also restore the contextual dock.
+        self.screen_change_signal.subscribe(self, self._screen_context_changed)
         if self._vault_ready:
             self.refresh_tasks(select=0)
             self._remember_vault()
@@ -2248,9 +2302,14 @@ class TaskApp(NotesActions, App):
             self._update_crumb()
         self._tick()
         self.set_interval(20, self._tick)
+        self.call_after_refresh(self._check_update_receipt)
+        self.call_after_refresh(self._start_automatic_updates)
         self.query_one(TaskList).focus()
         if self._choose_on_start:
             self.call_after_refresh(self.action_open_vault)
+
+    def _screen_context_changed(self, _screen) -> None:
+        self.call_after_refresh(self._context_hint)
 
     def _remember_vault(self) -> None:
         try:
@@ -2352,7 +2411,8 @@ class TaskApp(NotesActions, App):
 
     def on_resize(self, _event: events.Resize) -> None:
         if self.is_mounted:
-            self._layout_chrome()
+            # App receives this event before Textual commits the new size.
+            self.call_after_refresh(self._layout_chrome)
 
     def _layout_chrome(self) -> None:
         """Keep task titles and due dates readable on smaller terminals.
@@ -2360,7 +2420,8 @@ class TaskApp(NotesActions, App):
         width = self.size.width
         insp = self.query_one(Inspector)
         sidebar = self.query_one(Sidebar)
-        sidebar.display = width >= 96 and not (insp.display and width < 120)
+        sidebar.display = (not self._sidebar_hidden and width >= (110 if self.view == "notes" else 96)
+                           and not (insp.display and width < 120))
         sidebar.styles.width = 26
         fullscreen = insp.display and width < 72
         self.query_one("#main").display = not fullscreen
@@ -2370,7 +2431,9 @@ class TaskApp(NotesActions, App):
         self._update_crumb()
         self.query_one("#clock").display = width >= 100
         self.query_one("#search-hint").display = width >= 80
-        self.query_one("#status-info").display = width >= 90
+        self.query_one("#status-info").display = True
+        self.query_one("#status-right").display = width >= 90
+        self.query_one("#status-view").display = width >= 50
         if self.is_mounted:
             self.query_one(TaskList).border_title = Text(
                 "TASKS" if self.size.height >= 27 else self._view_label().upper())
@@ -2379,10 +2442,12 @@ class TaskApp(NotesActions, App):
 
     # -- data ---------------------------------------------------------------
     def _update_crumb(self) -> None:
-        summary = f"{self.vault.name}   ·   {self._summary}" if self.size.width >= 100 else self._summary
+        summary = f"{self.vault.name} · {self._view_label()}" if self._vault_ready else "Choose a folder to begin"
         self.query_one("#crumb", Label).update(Text(summary))
 
     def _view_label(self) -> str:
+        if self.view == "notes":
+            return "Notes"
         if self.project:
             return f"◆ {self.project}"
         return VIEW_LABEL.get(self.view, self.view)
@@ -2454,7 +2519,7 @@ class TaskApp(NotesActions, App):
         late = sum(1 for t in real if t.open and t.due and t.due < day)
         soon = sum(1 for t in real if t.open and t.due and day <= t.due <= day + dt.timedelta(days=7))
         self.query_one("#status-view", Label).update(Text(label.upper()))
-        self.query_one("#status-info", Label).update(Text(
+        self._set_status_info(Text(
             f"{n} task{'s' if n != 1 else ''} · {late} overdue · {soon} due ≤7d · {hi} high"
             + (f" · filter “{self.search_query}”" if self.search_query else "")))
         main_id = tl.current.id if tl.current else None
@@ -2491,7 +2556,7 @@ class TaskApp(NotesActions, App):
         tl = self.query_one(TaskList)
         insp = self.query_one(Inspector)
         self.query_one("#status-right", Label).update(
-            f"{tl.cursor_ordinal}/{tl.task_count}  ·  inspect {'open' if insp.display else 'closed'}")
+            f"{tl.cursor_ordinal}/{tl.task_count}")
         if insp.display:
             self._inspected_task = t
             insp.show(t, self.store.tasks, dt.date.today(), tl.style_for,
@@ -2519,6 +2584,18 @@ class TaskApp(NotesActions, App):
         else:
             hint = "↑↓ move  ·  Enter inspect  ·  Tab panes  ·  Ctrl+K all actions"
         self.query_one("#contextbar", Label).update(hint)
+        dock = self.query_one(ShortcutBar)
+        # Keep its reserved rows so a modal cannot resize the underlying note
+        # and clamp the reader's scroll position. Hidden keys cannot be clicked.
+        dock.visible = not isinstance(self.screen, ModalScreen)
+        if self.view != "notes":
+            tl = self.query_one(TaskList)
+            brief = ("Enter / ↓ results · Esc clear" if isinstance(self.focused, SearchInput) else
+                     "↑↓ views · → tasks" if isinstance(self.focused, Sidebar) else
+                     "↑↓ scroll · ← tasks" if isinstance(self.focused, Inspector) else
+                     "Space complete child · Esc back" if self.focused and self.focused.id == "ins-kids" else
+                     f"{tl.cursor_ordinal}/{tl.task_count}")
+            self.query_one("#status-right", Label).update(brief)
         self.query_one(ShortcutBar).set_mode(
             "notes-find" if self.focused and self.focused.id == "notes-find" else
             ("notes-search" if self.view == "notes" else "search") if isinstance(self.focused, SearchInput)
@@ -2583,8 +2660,33 @@ class TaskApp(NotesActions, App):
     def action_redo(self) -> None:
         self._restore_history(redo=True)
 
-    def announce(self, message: str) -> None:
-        self.notify(message, timeout=2.5, markup=False)
+    def _set_status_info(self, message: str | Text) -> None:
+        """Remember the latest view context even while a confirmation is shown."""
+        self._status_info = message.copy() if isinstance(message, Text) else message
+        if not self._status_message_active:
+            self.query_one("#status-info", Label).update(self._status_info)
+
+    def _clear_announcement(self, generation: int) -> None:
+        if generation != self._status_generation:
+            return
+        self._status_message_active = False
+        label = self.query_one("#status-info", Label)
+        label.remove_class("-message")
+        label.tooltip = None
+        label.update(self._status_info)
+
+    def announce(self, message: str, *, timeout: float = 3.5) -> None:
+        """Confirm routine actions without covering the user's list or note."""
+        self._status_generation += 1
+        generation = self._status_generation
+        self._status_message_active = True
+        if self._status_timer is not None:
+            self._status_timer.stop()
+        label = self.query_one("#status-info", Label)
+        label.add_class("-message")
+        label.tooltip = message
+        label.update(Text(message))
+        self._status_timer = self.set_timer(timeout, lambda: self._clear_announcement(generation))
 
     def _guard(self, callback):
         @wraps(callback)
@@ -2696,7 +2798,7 @@ class TaskApp(NotesActions, App):
             if level:
                 text.append(f"   {tm.PRIORITY_BY_LEVEL[level]}", "dim")
             opts.append((str(level), text))
-        return PickScreen("Priority", opts, current=str(t.priority if t else 0))
+        return PickScreen(Text("Priority" + (f" — {t.description}" if t else "")), opts, current=str(t.priority if t else 0))
 
     def status_picker(self, t: Task | None) -> PickScreen:
         opts = []
@@ -2707,7 +2809,7 @@ class TaskApp(NotesActions, App):
             text.append(label)
             text.append(f"   [{ch}]", "dim")
             opts.append((ch, text))
-        return PickScreen("Status", opts, current=(t.status if t else " "))
+        return PickScreen(Text("Status" + (f" — {t.description}" if t else "")), opts, current=(t.status if t else " "))
 
     def project_picker(self, t: Task) -> ProjectScreen:
         return ProjectScreen(self.store.projects(), t.project, t.description or t.id)
@@ -2858,11 +2960,13 @@ class TaskApp(NotesActions, App):
             ("undo", "Undo" + (f": {self.history.undo_label}" if self.history.can_undo else ""), "u / Ctrl+Z", "Restore the last change from this session", "restore recover", self.history.can_undo),
             ("redo", "Redo" + (f": {self.history.redo_label}" if self.history.can_redo else ""), "Ctrl+Y", "Reapply an undone change", "restore", self.history.can_redo),
             ("focus_search", "Find tasks", "/", "Search task text, projects, and tags in this view", "filter search", True),
+            ("toggle_sidebar", "Toggle sidebar", "Ctrl+B", "Show or hide navigation; number keys still change views", "pane space navigation", True),
             ("theme", "Change theme", "m", "Preview colors live; Escape restores your current theme", "appearance color dark teal", True),
             ("refresh", "Rescan vault", "r", "Reload changes made in Obsidian or your editor", "refresh sync", True),
             ("open_note", "Open source note", "o", "Open this Markdown file in your editor", "file markdown", has_task),
             ("save", "Save changes", "Ctrl+S", "Task changes are saved automatically to Markdown", "save files", True),
             ("push_vault", "Push vault", "Ctrl+Shift+S", "Commit vault changes and push to the existing Git remote", "git github remote sync upload backup", not self._pushing_vault),
+            ("check_updates", "Check for updates", "", "Find new Taskman releases on GitHub and install when ready", "app version upgrade download release", not self._pushing_vault),
             ("open_vault", "Open Vault…", "Ctrl+O", "Choose a folder or set up a new vault", "folder switch recent workspace", True),
             ("help", "Keyboard guide", "h / F1", "Browse all shortcuts and interactions", "help keys", True),
             ("quit", "Quit Taskman", "q", "Task changes are already saved to Markdown", "exit close", True),
@@ -2872,7 +2976,7 @@ class TaskApp(NotesActions, App):
         if self.view == "notes":
             commands = [command for command in commands if command.id in {
                 "undo", "redo", "focus_search", "theme", "refresh", "open_note", "save",
-                "open_vault", "push_vault", "help", "quit"}]
+                "open_vault", "push_vault", "help", "quit", "toggle_sidebar", "check_updates"}]
             commands = [Command(command.id, "Find notes" if command.id == "focus_search" else command.title,
                                 command.shortcut,
                                 "Search titles, content, categories, tags, and projects" if command.id == "focus_search" else command.description,
@@ -2912,6 +3016,15 @@ class TaskApp(NotesActions, App):
             self.query_one(NotesWorkspace).focus_list()
         else:
             self.query_one(TaskList).focus()
+
+    def action_toggle_sidebar(self) -> None:
+        self._sidebar_hidden = not self._sidebar_hidden
+        self._layout_chrome()
+        if not self.query_one(Sidebar).display and isinstance(self.focused, Sidebar):
+            self.action_focus_tasks()
+        self.announce("Sidebar hidden" if self._sidebar_hidden else
+                      "Sidebar shown" if self.query_one(Sidebar).display else
+                      "Sidebar will appear when the window is wider")
 
     def action_focus_sidebar(self) -> None:
         sidebar = self.query_one(Sidebar)
@@ -3162,7 +3275,7 @@ class TaskApp(NotesActions, App):
                 self.announce("Dates and repeat saved" if t.recurrence else "Dates saved")
 
         self.push_screen(DatesScreen(t.due, t.scheduled, recurrence=t.recurrence, start=t.start,
-                                    focus_repeat=focus_repeat, save=save), done)
+                                    focus_repeat=focus_repeat, save=save, task_name=t.description), done)
 
     def action_priority(self) -> None:
         t = self._selected()

@@ -28,6 +28,7 @@ from textual.widgets import Button, Input, Label, Markdown, OptionList, Static, 
 from textual.widgets.option_list import Option
 
 from .notes import Note
+from .dialog_style import COMPACT_DIALOG_CSS
 
 
 @dataclass(frozen=True)
@@ -315,8 +316,11 @@ class NotesWorkspace(Horizontal):
             self._show_preview()
 
     def on_resize(self, event: events.Resize) -> None:
+        was_dense = self.has_class("-compact") or self.has_class("-short")
         self.set_class(event.size.width < 78, "-compact")
         self.set_class(event.size.height < 16, "-short")
+        if was_dense != (self.has_class("-compact") or self.has_class("-short")):
+            self._populate_list()
         if self._find_open:
             self.call_after_refresh(self._scroll_to_match)
 
@@ -507,15 +511,29 @@ class NotesWorkspace(Horizontal):
         previous = str(selected_file) or self._selected_file
         self._notes = {str(note.file): note for note in notes}
         self._selected_file = previous if previous in self._notes else next(iter(self._notes), "")
+        self._populate_list()
+        self._show_preview()
+        self.post_message(self.Selected(self.current))
+
+    def _populate_list(self) -> None:
+        """Resize the list without rebuilding the preview or resetting Find."""
+        if not self.is_mounted:
+            return
+        dense = self.has_class("-compact") or self.has_class("-short")
         options: list[Option] = []
         for file, note in self._notes.items():
             detail = note.category or "Unfiled"
-            if note.tags:
-                detail += " · " + " ".join(f"#{tag}" for tag in note.tags)
-            row = Table.grid(expand=True)
-            row.add_column(no_wrap=True, overflow="ellipsis")
-            row.add_row(Text(note.title))
-            row.add_row(Text(detail, style="dim"))
+            row = Table.grid(expand=True, padding=(0, 1) if dense else 0)
+            row.add_column(ratio=3, no_wrap=True, overflow="ellipsis")
+            if dense:
+                row.add_column(ratio=1, min_width=8, max_width=20,
+                               justify="right", no_wrap=True, overflow="ellipsis")
+                row.add_row(Text(note.title), Text(detail, style="dim"))
+            else:
+                if note.tags:
+                    detail += " · " + " ".join(f"#{tag}" for tag in note.tags)
+                row.add_row(Text(note.title))
+                row.add_row(Text(detail, style="dim"))
             options.append(Option(row, id=file))
         listing = self.query_one("#notes-list", NotesList)
         with listing.prevent(OptionList.OptionHighlighted):
@@ -524,8 +542,6 @@ class NotesWorkspace(Horizontal):
             listing.highlighted = (
                 list(self._notes).index(self._selected_file) if self._selected_file else None
             )
-        self._show_preview()
-        self.post_message(self.Selected(self.current))
 
     def set_task_labels(self, labels: Mapping[str, str]) -> None:
         self._task_labels = dict(labels)
@@ -620,10 +636,10 @@ class DiscardNoteScreen(ModalScreen[bool]):
     DiscardNoteScreen Label { width: 1fr; height: auto; margin-bottom: 1; }
     DiscardNoteScreen Horizontal { height: auto; align-horizontal: right; }
     DiscardNoteScreen Button { margin-left: 1; }
-    """
+    """ + COMPACT_DIALOG_CSS
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="discard-note-dialog") as dialog:
+        with Vertical(id="discard-note-dialog", classes="compact-dialog") as dialog:
             dialog.border_title = "Discard changes?"
             yield Label("Your edits have not been saved.")
             with Horizontal():
@@ -664,11 +680,7 @@ class NoteEditorScreen(ModalScreen[NoteDraft | None]):
         width: 10; height: 1; color: $text-muted;
     }
     NoteEditorScreen NoteField {
-        width: 1fr; height: 1; border: none; padding: 0;
-        background: $background; background-tint: transparent;
-    }
-    NoteEditorScreen NoteField:focus {
-        border: none; background: $primary 15%; background-tint: transparent;
+        width: 1fr;
     }
     NoteEditorScreen #reference-text {
         height: 1fr; min-height: 6; margin-top: 1;
@@ -676,14 +688,15 @@ class NoteEditorScreen(ModalScreen[NoteDraft | None]):
     }
     NoteEditorScreen #reference-text:focus { border: round $accent; }
     NoteEditorScreen #reference-error {
-        height: auto; max-height: 3; color: $error; width: 1fr;
+        display: none; height: auto; max-height: 3; color: $error; width: 1fr;
     }
-    NoteEditorScreen #reference-buttons { height: 3; align-horizontal: right; }
+    NoteEditorScreen #reference-error.has-error { display: block; }
+    NoteEditorScreen #reference-buttons { height: 1; margin-top: 1; align-horizontal: right; }
     NoteEditorScreen #reference-status {
-        width: 1fr; height: 1; margin-top: 1; color: $text-muted;
+        width: 1fr; height: 1; color: $text-muted;
     }
     NoteEditorScreen Button { margin-left: 1; min-width: 9; }
-    """
+    """ + COMPACT_DIALOG_CSS
 
     def __init__(
         self, note: Note | None = None, *, categories: Iterable[str] = (),
@@ -707,7 +720,7 @@ class NoteEditorScreen(ModalScreen[NoteDraft | None]):
         self._save_handler = save_handler
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="reference-dialog") as dialog:
+        with Vertical(id="reference-dialog", classes="compact-dialog") as dialog:
             dialog.border_title = "Edit note" if self.note else "New note"
             dialog.border_subtitle = "Ctrl+S save · Tab fields · Esc cancel"
             with VerticalScroll(id="reference-fields"):
@@ -774,6 +787,7 @@ class NoteEditorScreen(ModalScreen[NoteDraft | None]):
         error = self.query_one("#reference-error", Label)
         if not draft.title:
             error.update("Enter a title before saving.")
+            error.add_class("has-error")
             self.query_one("#note-title", NoteField).focus()
             return
         if self._save_handler is not None:
@@ -783,6 +797,7 @@ class NoteEditorScreen(ModalScreen[NoteDraft | None]):
                 problem = str(exception)
             if problem:
                 error.update(Text(problem))
+                error.add_class("has-error")
                 return
         self.dismiss(draft)
 

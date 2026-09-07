@@ -1,8 +1,7 @@
-"""A complete, wrapping shortcut dock that keeps the task selection focused.
+"""Compact contextual shortcuts; the command palette holds the full reference.
 
-Textual's single-line Footer deliberately overflows its bindings. This dock
-measures each key and label in terminal cells and reserves all the rows needed,
-so the actions stay discoverable at smaller terminal widths as well.
+Primary actions and More fit into two rows. Labels and mouse hit targets share
+one layout so clicks preserve the focused task or child selection.
 """
 
 from __future__ import annotations
@@ -55,7 +54,7 @@ TASK_SHORTCUTS = (
     Shortcut("m", "Theme", "theme"),
     Shortcut("h", "Help", "help"),
     Shortcut("q", "Quit", "quit"),
-    Shortcut("Ctrl+K", "Commands", "commands"),
+    Shortcut("Ctrl+K", "More", "commands"),
 )
 
 # Letter shortcuts edit the query while the search field has focus. Showing
@@ -66,11 +65,11 @@ SEARCH_SHORTCUTS = (
     Shortcut("Alt+1", "Views", "focus_sidebar"),
     Shortcut("Alt+2", "Tasks", "focus_tasks"),
     Shortcut("Ctrl+O", "Vault", "open_vault"),
-    Shortcut("Ctrl+K", "Commands", "commands"),
+    Shortcut("Ctrl+K", "More", "commands"),
 )
 
 NOTES_SHORTCUTS = (
-    Shortcut("a", "New note", "new_reference"),
+    Shortcut("a", "Add", "new_reference"),
     Shortcut("e", "Edit", "edit_reference"),
     Shortcut("Del", "Delete", "delete_reference"),
     Shortcut("F2", "Rename", "rename_reference"),
@@ -88,14 +87,14 @@ NOTES_SHORTCUTS = (
     Shortcut("Ctrl+Y", "Redo", "redo"),
     Shortcut("r", "Rescan", "refresh"),
     Shortcut("1", "Tasks", "view_0"),
-    Shortcut("Ctrl+K", "Commands", "commands"),
+    Shortcut("Ctrl+K", "More", "commands"),
 )
 
 NOTE_FIND_SHORTCUTS = (
     Shortcut("Enter", "Next match", "next_note_match"),
     Shortcut("Shift+Enter", "Previous", "previous_note_match"),
     Shortcut("Esc", "Close find", "escape"),
-    Shortcut("Ctrl+K", "Commands", "commands"),
+    Shortcut("Ctrl+K", "More", "commands"),
 )
 
 
@@ -117,7 +116,7 @@ class ShortcutBar(Widget, can_focus=False, can_focus_children=False):
         dock: bottom;
         width: 1fr;
         height: auto;
-        min-height: 2;
+        min-height: 1;
         padding: 0 1;
         background: $panel;
         color: $text;
@@ -187,11 +186,12 @@ class ShortcutBar(Widget, can_focus=False, can_focus_children=False):
             return self._can_redo
         return True
 
-    def _rows(self, width: int) -> list[list[Shortcut]]:
+    @staticmethod
+    def _wrap(shortcuts: tuple[Shortcut, ...], width: int) -> list[list[Shortcut]]:
         """Keep every key/label together; wrap only between shortcuts."""
         rows: list[list[Shortcut]] = [[]]
         used = 0
-        for shortcut in self.shortcuts:
+        for shortcut in shortcuts:
             gap = 2 if rows[-1] else 0
             if rows[-1] and used + gap + shortcut.width > width:
                 rows.append([])
@@ -200,6 +200,33 @@ class ShortcutBar(Widget, can_focus=False, can_focus_children=False):
             rows[-1].append(shortcut)
             used += gap + shortcut.width
         return rows
+
+    def _rows(self, width: int) -> list[list[Shortcut]]:
+        shortcuts = self.shortcuts
+        full = self._wrap(shortcuts, width)
+        if len(full) <= 2:
+            return full
+        if self._mode in ("notes", "tasks", "inspector"):
+            actions = ("new_reference", "edit_reference", "delete_reference", "undo", "focus_search") if self._mode == "notes" else (
+                "add", "edit", "toggle", "undo", "focus_search")
+        elif self._mode == "notes-find":
+            actions = ("next_note_match", "escape")
+        else:
+            actions = ("focus_tasks", "escape")
+        primary = tuple(next(s for s in shortcuts if s.action == action) for action in actions)
+        more = next(s for s in shortcuts if s.action == "commands")
+        chosen = primary
+        # At unusually narrow widths retain More. A 40-column terminal still
+        # fits every primary Notes action, including Delete and Undo.
+        while chosen and len(self._wrap((*chosen, more), width)) > 2:
+            chosen = chosen[:-1]
+        for shortcut in shortcuts:
+            if shortcut.action in {*actions, "commands"}:
+                continue
+            candidate = (*chosen, shortcut)
+            if len(self._wrap((*candidate, more), width)) <= 2:
+                chosen = candidate
+        return self._wrap((*chosen, more), width)
 
     def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
         # Measure against the actual content width supplied by Textual, before

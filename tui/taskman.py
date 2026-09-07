@@ -831,7 +831,7 @@ class Section:
 # (key, title) in display order for open tasks, keyed by due date.
 DUE_BUCKETS: tuple[tuple[str, str], ...] = (
     ("overdue", "Overdue"), ("today", "Today"), ("tomorrow", "Tomorrow"),
-    ("week", "Next 7 days"), ("later", "Later"), ("nodate", "No date"),
+    ("week", "Next 7 days"), ("later", "Later"), ("nodate", "No due date"),
 )
 # Same idea for the Completed view, keyed by completion date.
 DONE_BUCKETS: tuple[tuple[str, str], ...] = (

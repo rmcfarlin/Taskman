@@ -16,6 +16,7 @@ from .note_files import RenamePlan
 from .note_templates import Template
 from .notes import Note
 from .notes_ui import DiscardNoteScreen
+from .dialog_style import COMPACT_DIALOG_CSS
 
 
 class RenameNoteScreen(ModalScreen[RenamePlan | None]):
@@ -23,14 +24,18 @@ class RenameNoteScreen(ModalScreen[RenamePlan | None]):
     DEFAULT_CSS = """
     RenameNoteScreen { align: center middle; }
     #rename-dialog { width: 80; max-width: 96%; height: 30; max-height: 95%;
-        border: round $primary; background: $surface; padding: 1 2; }
+        border: round $primary; border-title-color: $text-accent;
+        background: $surface; padding: 0 1; }
     #rename-content { height: 1fr; min-height: 0; overflow-x: hidden; }
     #rename-content Label { width: 1fr; height: auto; margin-bottom: 1; }
     #rename-filename { margin-bottom: 1; }
-    #rename-error { color: $error; }
-    #rename-buttons { height: 3; margin-top: 1; align-horizontal: right; }
+    #rename-error { color: $error; display: none; }
+    #rename-error.has-error { display: block; }
+    #rename-preview { display: none; }
+    #rename-preview.has-preview { display: block; }
+    #rename-buttons { height: 1; margin-top: 1; align-horizontal: right; }
     #rename-buttons Button { margin-left: 1; }
-    """
+    """ + COMPACT_DIALOG_CSS
 
     def __init__(self, note: Note, *, plan_handler: Callable[[str], RenamePlan],
                  apply_handler: Callable[[RenamePlan], str | None]) -> None:
@@ -41,11 +46,11 @@ class RenameNoteScreen(ModalScreen[RenamePlan | None]):
         self.plan: RenamePlan | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="rename-dialog") as dialog:
+        with Vertical(id="rename-dialog", classes="compact-dialog") as dialog:
             dialog.border_title = "Rename note file"
             with VerticalScroll(id="rename-content"):
                 yield Label(Text(f"Current file: {self.note.file}"))
-                yield Input(PurePosixPath(self.note.file).name, id="rename-filename")
+                yield Input(PurePosixPath(self.note.file).name, compact=True, id="rename-filename")
                 yield Label("Preview scans Markdown links throughout this vault. The note title stays the same.")
                 yield Label("", id="rename-preview")
                 yield Label("", id="rename-error")
@@ -56,12 +61,20 @@ class RenameNoteScreen(ModalScreen[RenamePlan | None]):
     def on_mount(self) -> None:
         self.query_one(Input).focus()
 
+    def _error(self, message: str = "") -> None:
+        label = self.query_one("#rename-error", Label)
+        label.update(Text(message))
+        label.set_class(bool(message), "has-error")
+        if message:
+            self.call_after_refresh(lambda: label.scroll_visible(animate=False, immediate=True))
+
     @on(Input.Changed)
     def _changed(self, event: Input.Changed) -> None:
         event.stop()
         self.plan = None
         self.query_one("#rename-preview", Label).update("")
-        self.query_one("#rename-error", Label).update("")
+        self.query_one("#rename-preview").remove_class("has-preview")
+        self._error()
         self.query_one("#rename-apply", Button).label = "Preview"
 
     @on(Input.Submitted)
@@ -76,8 +89,9 @@ class RenameNoteScreen(ModalScreen[RenamePlan | None]):
         except (OSError, ValueError, RuntimeError) as error:
             self.plan = None
             self.query_one("#rename-preview", Label).update("")
+            self.query_one("#rename-preview").remove_class("has-preview")
             self.query_one("#rename-apply", Button).label = "Preview"
-            self.query_one("#rename-error", Label).update(Text(str(error)))
+            self._error(str(error))
             return
         plan = self.plan
         files = [path for path, _raw in plan.replacements]
@@ -87,7 +101,8 @@ class RenameNoteScreen(ModalScreen[RenamePlan | None]):
         self.query_one("#rename-preview", Label).update(Text(
             f"New file: {plan.new_file}\n{plan.changed_links} links updated in "
             f"{plan.changed_files} Markdown files.\n{details}\nUndo restores the filename and links together."))
-        self.query_one("#rename-error", Label).update("")
+        self.query_one("#rename-preview").add_class("has-preview")
+        self._error()
         button = self.query_one("#rename-apply", Button)
         button.label = "Apply rename"
         self.set_focus(button, scroll_visible=False)
@@ -108,7 +123,7 @@ class RenameNoteScreen(ModalScreen[RenamePlan | None]):
             except (OSError, ValueError, RuntimeError) as exception:
                 error = str(exception)
             if error:
-                self.query_one("#rename-error", Label).update(Text(error))
+                self._error(error)
                 self.plan = None
                 self.query_one("#rename-apply", Button).label = "Preview"
             else:
@@ -124,13 +139,19 @@ class TemplateEditorScreen(ModalScreen[str | None]):
     DEFAULT_CSS = """
     TemplateEditorScreen { align: center middle; }
     #template-dialog { width: 100; max-width: 96%; height: 90%;
-        border: round $primary; background: $surface; padding: 0 1; }
+        border: round $primary; border-title-color: $text-accent;
+        background: $surface; padding: 0 1; }
     #template-dialog Label { height: auto; }
-    #template-text { height: 1fr; margin: 1 0; }
-    #template-error { color: $error; max-height: 4; }
-    #template-buttons { height: auto; align-horizontal: right; }
+    #template-intro { width: 1fr; max-height: 4; text-wrap: wrap; }
+    #template-text { height: 1fr; min-height: 4; margin: 1 0;
+        border: round $primary-muted; background: $background; }
+    #template-text:focus { border: round $accent; }
+    #template-error { display: none; width: 1fr; color: $error;
+        max-height: 3; text-wrap: wrap; }
+    #template-error.has-error { display: block; }
+    #template-buttons { height: 1; align-horizontal: right; }
     #template-buttons Button { margin-left: 1; }
-    """
+    """ + COMPACT_DIALOG_CSS
 
     def __init__(self, template: Template, *, save_handler: Callable[[str], str | None]) -> None:
         super().__init__()
@@ -138,10 +159,10 @@ class TemplateEditorScreen(ModalScreen[str | None]):
         self._save_handler = save_handler
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="template-dialog") as dialog:
+        with Vertical(id="template-dialog", classes="compact-dialog") as dialog:
             dialog.border_title = Text(f"Edit template — {self.template.name}")
             dialog.border_subtitle = "Ctrl+S save · Esc cancel"
-            yield Label(Text(f"{self.template.file}\nUse {{{{date}}}} for today's date. Changes apply to future notes."))
+            yield Label(Text(f"{self.template.file}\nUse {{{{date}}}} for today's date. Changes apply to future notes."), id="template-intro")
             yield TextArea(self.template.body, id="template-text", soft_wrap=True)
             yield Label("", id="template-error")
             with Horizontal(id="template-buttons"):
@@ -159,6 +180,7 @@ class TemplateEditorScreen(ModalScreen[str | None]):
             error = str(exception)
         if error:
             self.query_one("#template-error", Label).update(Text(error))
+            self.query_one("#template-error").add_class("has-error")
         else:
             self.dismiss(body)
 

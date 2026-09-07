@@ -92,7 +92,7 @@ def test_dock_completion_changes_only_focused_child_with_notifications(dock_vaul
 
 
 @pytest.mark.parametrize("size", [(60, 16), (80, 18), (120, 18), (130, 30)])
-def test_short_terminal_keeps_task_rows_and_every_dock_action_visible(dock_vault, size):
+def test_short_terminal_keeps_task_rows_primary_actions_and_more_visible(dock_vault, size):
     async def go():
         app = appmod.TaskApp(dock_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=size) as pilot:
@@ -103,12 +103,14 @@ def test_short_terminal_keeps_task_rows_and_every_dock_action_visible(dock_vault
             context = app.query_one("#contextbar")
             status = app.query_one("#statusbar")
             assert tasks.size.height >= 4
-            assert tasks.region.bottom <= context.region.y
-            assert context.region.bottom <= status.region.y
+            assert not context.display
+            assert tasks.region.bottom <= status.region.y
             assert status.region.bottom <= dock.region.y
             assert dock.region.bottom == size[1]
             content = "\n".join(_dock_lines(dock))
-            for shortcut in TASK_SHORTCUTS:
+            assert dock.size.height <= 2
+            for shortcut in (s for s in TASK_SHORTCUTS if s.action in {
+                    "add", "edit", "toggle", "undo", "focus_search", "commands"}):
                 assert f" {shortcut.key}  {shortcut.label}" in content
             assert app.screen.get_widget_at(dock.region.x + 2, dock.region.y)[0] is dock
     asyncio.run(go())
@@ -130,7 +132,8 @@ def test_search_dock_tracks_focus_and_escape_restores_full_actions(dock_vault):
             await _click_action(pilot, dock, "escape")
             assert app.query_one("#search", Input).value == ""
             assert app.query_one(appmod.TaskList).has_focus
-            assert " q  Quit" in "\n".join(_dock_lines(dock))
+            assert " a  Add" in "\n".join(_dock_lines(dock))
+            assert "Ctrl+K" in "\n".join(_dock_lines(dock))
             assert not dock._can_undo and not dock._can_redo
     asyncio.run(go())
 

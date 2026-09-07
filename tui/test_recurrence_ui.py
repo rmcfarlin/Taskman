@@ -128,7 +128,8 @@ def test_completion_clones_parent_note_with_new_id_and_undo_restores_both(vault)
             assert next_task.project == "Finance" and next_task.note == done.note
             assert not tm.children_of(rows, next_task)
             assert len(tm.children_of(rows, done)) == 1 and tm.children_of(rows, done)[0].done
-            assert "next occurrence" in messages(app)
+            assert "next occurrence" in app.query_one("#status-info").render_line(0).text
+            assert not list(app.screen.query(Toast))
             completed = path.read_bytes()
             await pilot.press("u")
             assert path.read_bytes() == before and not app.history.can_undo

@@ -96,8 +96,9 @@ def test_existing_arbitrary_folder_opens_without_initialization(two_vaults, tmp_
             assert app.query_one(appmod.TaskList).has_focus
             assert settings.last_vault() == other
             assert _files(other) == before and not (other / ".taskman").exists()
-            assert any("Opened Ordinary notes" in toast.render().plain
-                       for toast in app.screen.query(Toast))
+            status = app.query_one("#status-info")
+            assert status.display and status.has_class("-message")
+            assert "Opened Ordinary notes" in status.render_line(0).text
     asyncio.run(go())
 
 

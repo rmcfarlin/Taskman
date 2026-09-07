@@ -19,6 +19,7 @@ from textual.widgets.option_list import Option
 
 from .settings import recent_vaults
 from .vaults import normalize_folder, plan_vault
+from .dialog_style import COMPACT_DIALOG_CSS
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ class VaultScreen(ModalScreen[VaultChoice | None]):
     }
     VaultScreen #vault-title { height: 1; color: $text; text-style: bold; }
     VaultScreen #vault-intro { height: 2; color: $text-muted; }
-    VaultScreen #vault-path { height: 3; margin: 0; }
+    VaultScreen #vault-path { margin: 0; }
     VaultScreen #vault-browser-heading { height: 1; margin-top: 1; }
     VaultScreen #vault-location { width: 1fr; height: 1; color: $text-muted; }
     VaultScreen #vault-recent {
@@ -111,7 +112,7 @@ class VaultScreen(ModalScreen[VaultChoice | None]):
     VaultScreen #vault-preview { height: 3; color: $text-muted; margin-top: 1; }
     VaultScreen #vault-error { display: none; height: auto; max-height: 2; color: $error; }
     VaultScreen #vault-error.has-error { display: block; }
-    VaultScreen #vault-actions { height: 3; }
+    VaultScreen #vault-actions { height: 1; margin-bottom: 1; }
     VaultScreen #vault-actions Button { min-width: 10; width: auto; margin: 0 1 0 0; }
     VaultScreen #vault-hints { height: 2; color: $text-muted; }
     VaultScreen.compact #vault-dialog { width: 100%; height: 100%; padding: 0 1; }
@@ -119,7 +120,7 @@ class VaultScreen(ModalScreen[VaultChoice | None]):
     VaultScreen.compact #vault-browser-heading { margin-top: 0; }
     VaultScreen.compact #vault-preview { height: 3; margin-top: 0; }
     VaultScreen.compact #vault-hints { height: 2; }
-    """
+    """ + COMPACT_DIALOG_CSS
 
     def __init__(self, current: Path | None = None, welcome: bool = False):
         super().__init__()
@@ -135,13 +136,13 @@ class VaultScreen(ModalScreen[VaultChoice | None]):
         self._exists = False
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="vault-dialog"):
+        with Vertical(id="vault-dialog", classes="compact-dialog"):
             yield Static("Welcome to Taskman" if self.welcome else "Open vault",
                          id="vault-title", markup=False)
             yield Static("Choose a folder for your Markdown tasks. Your files stay on your computer.",
                          id="vault-intro", markup=False)
             yield FolderInput(value=str(self.current or Path.home()),
-                              placeholder="Folder path — Enter to browse", id="vault-path")
+                              placeholder="Folder path — Enter to browse", compact=True, id="vault-path")
             with Horizontal(id="vault-browser-heading"):
                 yield Static("Folders", id="vault-location", markup=False)
                 yield Button("Recent · Alt+R", id="vault-recent")
