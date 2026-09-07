@@ -1,3 +1,24 @@
+# Taskman 3.0.0
+
+Recurring tasks, scheduled work in Now, stable task IDs for automation, and reliable Windows keyboard pushing are now part of Taskman. Your vault stays plain Markdown, with no bulk migration required.
+
+- Fixed physical **Ctrl+Shift+S** in the Windows console. The input driver now retains the native Shift modifier before decoding the key, distinguishing push from local **Ctrl+S** saves.
+- Added **Repeat** to the Dates dialog with presets, typed rules, validation, and **Set recurrence** in the command menu. Due, scheduled, and recurrence changes save atomically with one undo.
+- Completing a recurring task creates its next occurrence above the completed one. Dates retain their offsets; the task's own note is copied, while subtasks stay with the completed task. Each new occurrence gets its own stable ID.
+- Supports daily, weekday, weekly, monthly, and yearly intervals, selected weekdays, first/last day of the month, and completion-based `when done` rules. Unsupported imported rules remain visible and produce a warning on completion without spawning a task.
+- Reopening keeps the next occurrence; repeating completion does not create duplicates. Cancellation ends an occurrence without spawning. CLI `--repeat` edits the same Markdown rules, and completion results expose the successor and any warning.
+
+- Restored **Ctrl+Shift+S** and **Push vault** in the command menu to commit vault changes and push to an existing Git remote. Git setup and repository creation remain explicit external actions. Local save and editor save shortcuts do not publish.
+- Git pushes run in the background, respect ignored files, exclude the temporary writer lock, preserve local commits after a failed push, and report missing or ambiguous destinations. No automatic pull, rebase, force-push, or vault script execution.
+- Replaced Today with **Now** (**2**) and made it the initial view: work due or scheduled today or earlier, excluding forwarded tasks. Missed deadlines appear under Overdue; all remaining qualifying work appears under Today. **All open** remains on **1** and **Notes** on **8**.
+- Added a **Dates** editor (**d**) for due, scheduled, and recurrence, with focused-field quick date buttons, shared natural-language date input, atomic saving, and draft retention on errors. Date labels explain why a task appears in Now.
+- Kept Overdue and Next 7 due-date-only; Inbox now excludes scheduled work. The plain `today` command remains an alias of `now`.
+- Added stable IDs to newly created tasks and subtasks, plus explicit ID assignment for legacy tasks. Reads never migrate a vault or change existing task IDs.
+- Added CLI lookup, date updates, explicit completion, and JSON output. Stable IDs also work with subtask and attached-note commands. Repeating completion never reopens a task.
+- Added shared writer coordination and stale-task checks for task changes, Notes writes, and undo/redo. Anchored targets can be resolved after line shifts or moves; ambiguous IDs and detected external edits are rejected.
+
+Existing vaults need no bulk migration. Recurrence runs when you explicitly complete a task; opening a vault does not generate occurrences.
+
 # Taskman 2.5.0
 
 Keep reusable reference material alongside your tasks. The new Notes workspace supports standalone Markdown notes, full-text search, categories, tags, and optional links to tasks and projects.

@@ -264,6 +264,15 @@ class NotesStore:
 
     def create(self, title: str, body: str = "", category: str = "Unfiled", tags=(), projects=(),
                tasks=(), file: str | None = None) -> Note:
+        if file is not None:
+            self._path(file)
+        prepared = _canonical(Note(file or "Notes/Untitled.md", title, body, category, tags, projects, tasks))
+        from .taskman import vault_write_lock
+        with vault_write_lock(self.root):
+            return self._create_locked(prepared.title, prepared.body, prepared.category,
+                                       prepared.tags, prepared.projects, prepared.tasks, file)
+
+    def _create_locked(self, title, body, category, tags, projects, tasks, file) -> Note:
         for _attempt in range(100):
             relative = file if file is not None else self.new_path(title)
             path = self._path(relative)
@@ -299,6 +308,13 @@ class NotesStore:
         raise NoteConflict("A note with this name keeps appearing; choose another title")
 
     def save(self, note: Note, *, expected_revision=_DEFAULT) -> Note:
+        note = _canonical(note)
+        self._path(note.file)
+        from .taskman import vault_write_lock
+        with vault_write_lock(self.root):
+            return self._save_locked(note, expected_revision=expected_revision)
+
+    def _save_locked(self, note: Note, *, expected_revision=_DEFAULT) -> Note:
         note = _canonical(note)
         expected = note.revision if expected_revision is _DEFAULT else expected_revision
         path = self._path(note.file)

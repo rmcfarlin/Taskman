@@ -35,7 +35,7 @@ TASK_SHORTCUTS = (
     Shortcut("a", "Add", "add"),
     Shortcut("e", "Edit", "edit"),
     Shortcut("Space", "Done", "toggle"),
-    Shortcut("d", "Due", "due"),
+    Shortcut("d", "Dates", "due"),
     Shortcut("p", "Priority", "priority"),
     Shortcut("s", "Status", "status"),
     Shortcut("j", "Project", "project"),

@@ -28,6 +28,7 @@ def test_default_workspace_has_no_find_bar_or_duplicate_view_heading(chrome_vaul
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tasks = app.query_one(appmod.TaskList)
             assert not app.query_one("#searchbar").display
@@ -46,6 +47,7 @@ def test_search_filters_and_escape_recovers_space_and_focus(chrome_vault, size, 
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             searchbar = app.query_one("#searchbar")
             search = app.query_one("#search", appmod.Input)
@@ -82,6 +84,7 @@ def test_empty_find_bar_closes_for_explicit_dismissal(chrome_vault, exit_key):
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=(140, 38)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             searchbar = app.query_one("#searchbar")
             search = app.query_one("#search", appmod.Input)
@@ -104,6 +107,7 @@ def test_tab_leaves_empty_find_visible_without_moving_results(chrome_vault, key,
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=(140, 38)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             await pilot.press("/")
             await pilot.pause()
@@ -128,6 +132,7 @@ def test_search_opens_from_fullscreen_inspector_on_small_terminal(chrome_vault):
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=(68, 20)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             await pilot.press("right")
             await pilot.pause()
@@ -153,6 +158,7 @@ def test_empty_find_mouse_clicks_keep_the_original_task_target(chrome_vault, siz
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tasks = app.query_one(appmod.TaskList)
             await pilot.press("end", "/")
@@ -197,6 +203,7 @@ def test_canceling_modal_restores_empty_find_before_escape_closes_it(chrome_vaul
     async def go():
         app = appmod.TaskApp(chrome_vault, theme="taskman-dark-teal")
         async with app.run_test(size=(140, 38)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             searchbar = app.query_one("#searchbar")
             search = app.query_one("#search", appmod.Input)
@@ -223,6 +230,7 @@ def test_workspace_backgrounds_follow_theme_through_pane_focus(chrome_vault, the
     async def go():
         app = appmod.TaskApp(chrome_vault, theme=theme)
         async with app.run_test(size=(140, 38)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             expected = Color.parse(app.theme_variables["background"])
             await pilot.press("right")

@@ -2,8 +2,8 @@
 
 Only declared files are read. Undo/redo checks *all* affected files before
 writing, so a detected external edit never results in a partial restoration.
-Writes are atomic per file; this is not a cross-file filesystem transaction
-and cannot lock out another program writing between the check and replacement.
+Writes are atomic per file and coordinate with other Taskman writers. External
+editors do not participate in that lock; detected external changes abort undo.
 """
 
 from __future__ import annotations
@@ -107,6 +107,15 @@ class History:
     def record(
         self, label: str, paths: Iterable[Path | str], *, context: Any = None
     ) -> Iterator[None]:
+        from .taskman import vault_write_lock
+        with vault_write_lock(self.vault):
+            with self._record_locked(label, paths, context=context):
+                yield
+
+    @contextmanager
+    def _record_locked(
+        self, label: str, paths: Iterable[Path | str], *, context: Any = None
+    ) -> Iterator[None]:
         if self._recording:
             raise RuntimeError("History records cannot be nested")
         if isinstance(paths, (str, Path)):
@@ -136,6 +145,17 @@ class History:
         return self._restore(self._redo, self._undo, undo=False)
 
     def _restore(
+        self, source: list[HistoryEntry], destination: list[HistoryEntry], *, undo: bool
+    ) -> HistoryEntry | None:
+        if self._recording:
+            raise RuntimeError("Cannot undo or redo during a history record")
+        if not source:
+            return None
+        from .taskman import vault_write_lock
+        with vault_write_lock(self.vault):
+            return self._restore_locked(source, destination, undo=undo)
+
+    def _restore_locked(
         self, source: list[HistoryEntry], destination: list[HistoryEntry], *, undo: bool
     ) -> HistoryEntry | None:
         if self._recording:

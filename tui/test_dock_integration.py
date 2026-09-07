@@ -51,6 +51,7 @@ def test_dock_form_clicks_edit_focused_child_and_return_focus(dock_vault, action
     async def go():
         app = appmod.TaskApp(dock_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("right", "tab")
             await pilot.pause()
             children = app.query_one("#ins-kids", OptionList)
@@ -63,7 +64,7 @@ def test_dock_form_clicks_edit_focused_child_and_return_focus(dock_vault, action
             else:
                 # The child has no due date; the parent is due today.
                 assert app.screen._current is None
-                assert app.screen.query_one("#text", Input).value == ""
+                assert app.screen.query_one("#due", Input).value == ""
             await pilot.press("escape")
             await pilot.pause()
             assert children.has_focus and children.highlighted == 0
@@ -75,6 +76,7 @@ def test_dock_completion_changes_only_focused_child_with_notifications(dock_vaul
     async def go():
         app = appmod.TaskApp(dock_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("right", "tab")
             await pilot.pause()
             children = app.query_one("#ins-kids", OptionList)
@@ -94,6 +96,7 @@ def test_short_terminal_keeps_task_rows_and_every_dock_action_visible(dock_vault
     async def go():
         app = appmod.TaskApp(dock_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             dock = app.query_one(ShortcutBar)
             tasks = app.query_one(appmod.TaskList)
@@ -115,6 +118,7 @@ def test_search_dock_tracks_focus_and_escape_restores_full_actions(dock_vault):
     async def go():
         app = appmod.TaskApp(dock_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(80, 24)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             dock = app.query_one(ShortcutBar)
             await pilot.press("/")
             await pilot.pause()
@@ -136,6 +140,7 @@ def test_notifications_leave_the_dock_visible_and_clickable(dock_vault, size):
     async def go():
         app = appmod.TaskApp(dock_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             app.notify("Task updated. Press u to undo.", title="Updated", timeout=20)
             await pilot.pause()
             dock = app.query_one(ShortcutBar)

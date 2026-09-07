@@ -6,7 +6,7 @@ A keyboard-first task and notes manager for folders of Markdown files. Open a fo
 
 ## Download and run
 
-**Windows:** download the `taskman-2.5.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases), extract the entire archive, and run:
+**Windows:** download the `taskman-3.0.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.0.0), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-2.5.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-3.0.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -88,15 +88,83 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | / | Find tasks |
 | a / e | Add / edit task |
 | Space | Complete or reopen task |
-| d / p / s | Due date / priority / status |
+| d / p / s | Due, scheduled, and repeat / priority / status |
 | j / t / n | Project / subtask / note |
 | i | Task details |
 | u / Ctrl+Y | Undo / redo |
 | m / h | Theme / keyboard help |
 | Ctrl+S | Confirm saved state |
+| Ctrl+Shift+S | Commit and push the vault to its existing Git remote |
 | q | Quit |
 
 Letter shortcuts apply while browsing tasks; typing in a text field edits the field. Use a terminal with a Unicode-capable font for the best display.
+
+## Push to an existing Git remote
+
+Press **Ctrl+Shift+S** from a task or Notes view, or choose **Push vault** from **Ctrl+K**. Taskman commits changed vault files and pushes the current branch to its existing remote. This includes notes, attachments, additions, and deletions; Git-ignored files and Taskman's temporary writer lock are excluded. With no new changes, it still pushes existing local commits.
+
+The vault must be the root of an existing Git repository. Taskman uses the branch's configured push remote or upstream, then `origin` or a sole remote when no destination is configured. It never initializes Git, creates a GitHub repository, adds a remote, or force-pushes. If no remote exists, your changes stay saved locally. A rejected push keeps the local commit so you can resolve the problem and retry.
+
+Git must be installed and authenticated already. Taskman reports missing credentials, ambiguous remotes, staged work, or unfinished Git operations instead of changing their configuration. It does not run a vault's `push.ps1` or Git hooks, and it does not pull, merge, or rebase automatically.
+
+Repositories that use Git LFS or content filters must be pushed with their normal Git tooling.
+
+**Ctrl+S** remains local save confirmation. In an editor, save shortcuts save that draft without publishing. Taskman's Windows console driver preserves Shift on the physical Ctrl+Shift+S keypress. If another terminal cannot distinguish these keys, **Ctrl+K → Push vault** is also available.
+
+## Now and scheduling
+
+Taskman opens in **Now** (**2**): open tasks due today or earlier, plus tasks scheduled for today or earlier. Forwarded tasks stay in All and search. **Overdue** contains missed deadlines; **Today** contains the rest, including unfinished scheduled work with a future deadline. Undated tasks remain available in **Inbox** (**5**) and **All open** (**1**). Inbox excludes tasks with either a due or scheduled date. Start dates remain visible in task details and do not determine Now membership.
+
+The date column explains why a task appears: **Due today**, **Due 2d late**, or **Sched Sep 6**. **Overdue** (**3**) and **Next 7 days** (**4**) keep their due-date meaning.
+
+Press **d** to edit **Due** (the deadline) and **Scheduled** (when you plan to work on it). Both fields accept `today`, `tomorrow`, a weekday such as `mon`, `+7`, or `YYYY-MM-DD`. Leave a field empty or type `clear` to remove it. A weekday means its next occurrence; naming today's weekday chooses next week. Quick buttons change the last date field you focused. **Enter** or **Ctrl+S** saves both fields together; **Esc** cancels. An invalid date or save conflict keeps your entries open. Undo restores both dates in one step.
+
+## Recurring tasks
+
+Press **d** and fill in **Repeat**, or choose **Set recurrence** from **Ctrl+K**. Choose **Presets** or type a rule, such as `every week`, `every 2 months`, or `every month on the last`. Set a due or scheduled date first; an existing start date also counts. Dates and Repeat save together. Choose `none` to remove recurrence.
+
+Supported rules are `every day` / `every N days`, `every weekday`, `every week` / `every N weeks`, `every week on Monday, Wednesday, Friday`, `every month` / `every N months`, `every month on the 1st`, `every month on the last`, and `every year`. Add `when done` to calculate the next date from completion. Otherwise, it advances from the old date, even when that leaves the next occurrence overdue. Weekdays mean Monday through Friday; holidays are not excluded.
+
+Completing a repeating task inserts the next occurrence immediately above it in the same Markdown file:
+
+```markdown
+- [ ] Monthly close 🔁 every month on the last 📅 2026-10-31
+- [x] Monthly close 🔁 every month on the last 📅 2026-09-30 ✅ 2026-09-30
+```
+
+The reference date is due, then scheduled, then start. Other dates move by the same number of days, preserving the planned lead time. Plain monthly rules clamp to the last valid date when needed; use `every month on the last` to consistently choose month-end. `every month on the 31st` is unsupported.
+
+The new occurrence keeps the task's text, priority, tags, project, recurrence, and own note. It gets a new stable ID and no subtasks. Completing a parent also completes its open subtasks; only the selected task creates a next occurrence. One undo restores the entire change. Cancelling does not create a successor. Reopening keeps the successor, and completing that same old occurrence again does not create a duplicate. Hidden Markdown identity and successor comments track this relationship; the example above omits them for readability.
+
+Existing rules outside this supported set remain in the file and appear in task details. Completing an unsupported or undated repeating task marks it done and displays a warning without creating a successor. The Dates dialog rejects new unsupported rules and recurrence without a date.
+
+Scripts can create or update recurrence with `--repeat "every week"` alongside `--add`, or with `--id ID`. `--complete ID` generates the successor once; `--json` includes recurrence details and any warning.
+
+Scheduling work for tomorrow removes it from Now only when its deadline has not arrived. Tasks already due remain visible until you complete them or change their deadline.
+
+## Automation
+
+New tasks and subtasks receive a stable ID stored in a hidden Markdown comment. The ID survives line shifts and file moves. Existing files need no bulk migration: reading and listing tasks never adds IDs. Use `--ensure-id` to give an existing task a stable handle; legacy `FILE:LINE` references continue to work for `--under`.
+
+```powershell
+# Create a task and capture its stable ID.
+$created = taskman --vault "C:\My work\Tasks" --add "Review supplier terms" --project Operations --due +7 --scheduled today --json | ConvertFrom-Json
+$taskId = $created.task.id
+
+# Read, reschedule, add an attached note, or complete that exact task.
+taskman --vault "C:\My work\Tasks" --id $taskId --json
+taskman --vault "C:\My work\Tasks" --id $taskId --scheduled tomorrow
+taskman --vault "C:\My work\Tasks" --note "Check the revised quote." --under $taskId
+taskman --vault "C:\My work\Tasks" --complete $taskId --json
+
+# Give an older task an ID explicitly, or list Now without changing files.
+taskman --vault "C:\My work\Tasks" --ensure-id "Projects/Operations.md:12" --json
+taskman --vault "C:\My work\Tasks" --plain now --json
+```
+
+Completing an already-completed task does nothing. JSON output includes the stable ID (or `null` for a legacy task), current location, status, description, project, and dates. JSON errors return `ok: false` and a nonzero exit code. `--plain today` remains an alias for `--plain now`.
+
+Taskman coordinates its own writers and rejects detected stale edits or ambiguous IDs. If another editor changes a task while you are editing it, refresh and retry. External editors and sync software do not participate in Taskman's writer lock.
 
 ## Reference notes
 
@@ -116,7 +184,7 @@ Notes can stand alone or support several tasks. Creating a task from a note keep
 
 While browsing tasks, **l** links an existing reference note or creates a linked note, and **k** opens related notes. Linked notes also appear in the task's details pane. The existing **n** shortcut still edits the task's attached note.
 
-Notes remain local Markdown files and use your existing sync and backup tools. Taskman stores note labels and relationships in a Markdown comment. Linking adds an identity comment to the task so the relationship survives edits and moves; keep these comments when editing files externally. Tasks receive no identity comment until you link them.
+Notes remain local Markdown files and use your existing sync and backup tools. Taskman stores note labels and relationships in a Markdown comment. Linking an older task adds an identity comment so the relationship survives edits and moves; keep these comments when editing files externally. New tasks already have these IDs.
 
 ## Plain terminal commands
 

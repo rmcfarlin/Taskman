@@ -88,6 +88,10 @@ def test_existing_arbitrary_folder_opens_without_initialization(two_vaults, tmp_
         async with app.run_test(notifications=True, size=(110, 34)) as pilot:
             await _choose(app, pilot, VaultChoice(other, initialize=False))
             assert app.vault == other and app._vault_ready
+            assert app.view == appmod.DEFAULT_VIEW == "now"
+            assert app.query_one(appmod.TaskList).current is None  # An undated task is outside Now.
+            assert [task.description for task in app.store.tasks] == ["Follow up with client"]
+            await pilot.press("1")
             assert app.query_one(appmod.TaskList).current.description == "Follow up with client"
             assert app.query_one(appmod.TaskList).has_focus
             assert settings.last_vault() == other
@@ -126,7 +130,7 @@ def test_switch_resets_search_inspector_and_undo_targets(two_vaults):
     async def go():
         app = appmod.TaskApp(first, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 36)) as pilot:
-            await pilot.press("space")
+            await pilot.press("1", "space")  # Complete an undated task from All open.
             assert app.history.can_undo
             old_history = app.history
             saved_first = _files(first)
@@ -143,6 +147,8 @@ def test_switch_resets_search_inspector_and_undo_targets(two_vaults):
             assert app.view == appmod.DEFAULT_VIEW and app.project == ""
             assert not app.query_one(appmod.Inspector).display
             assert app._command_target is None
+            assert app.query_one(appmod.TaskList).current is None  # The new vault also starts in Now.
+            await pilot.press("1")
             assert app.query_one(appmod.TaskList).current.description == "Different vault task"
             assert app._inspected_task is None or app._inspected_task in app.store.tasks
             before_second = _files(second)
@@ -150,7 +156,7 @@ def test_switch_resets_search_inspector_and_undo_targets(two_vaults):
             assert _files(first) == saved_first and _files(second) == before_second
             # First-row ids collide across these folders. A new action must
             # still target only the currently open folder.
-            await pilot.press("space")
+            await pilot.press("1", "space")  # Complete an undated task from All open.
             assert tm.load_all(second)[0].done
             assert _files(first) == saved_first
     asyncio.run(go())
@@ -170,7 +176,7 @@ def test_failed_scan_retains_active_vault_history_and_selection(two_vaults, monk
     async def go():
         app = appmod.TaskApp(first, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(110, 34)) as pilot:
-            await pilot.press("space")
+            await pilot.press("1", "space")  # Complete an undated task from All open.
             old_store, old_history = app.store, app.history
             selected = app.query_one(appmod.TaskList).current.id
             saved = _files(first)
@@ -192,7 +198,7 @@ def test_open_vault_refuses_to_leave_dirty_note_editor(two_vaults):
     async def go():
         app = appmod.TaskApp(first, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(110, 34)) as pilot:
-            await pilot.press("n")
+            await pilot.press("1", "n")  # The note belongs to an undated task.
             screen = app.screen
             assert isinstance(screen, appmod.NoteScreen)
             area = screen.query_one("#note-text", TextArea)
@@ -253,7 +259,7 @@ def test_cancelling_picker_keeps_current_folder_and_history(two_vaults):
     async def go():
         app = appmod.TaskApp(first, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(110, 34)) as pilot:
-            await pilot.press("space")
+            await pilot.press("1", "space")  # Complete an undated task from All open.
             before, old_history = _files(first), app.history
             await pilot.press("ctrl+o", "escape")
             await pilot.pause()

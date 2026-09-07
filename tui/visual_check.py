@@ -90,6 +90,9 @@ async def main(*, notes_only: bool = False, output: Path | None = None) -> None:
             "  - [x] Collect division checklists\n"
             "  - [ ] Review open reconciliation items\n"
             f"- [/] Prepare the leadership briefing ⏫ 📅 {date(0)} #planning\n"
+            f"- [ ] Work on next week's forecast 🔼 ⏳ {date(0)} 📅 {date(5)} #finance\n"
+            f"- [ ] Follow up on the planned review ⏳ {date(-1)} 📅 {date(7)}\n"
+            f"- [ ] Read supplier proposal ⏳ {date(0)}\n"
             f"- [ ] Book the project review 📅 {date(1)}\n"
             "- [ ] Capture ideas for the next quarter #ideas\n",
             encoding="utf-8",
@@ -117,6 +120,7 @@ async def main(*, notes_only: bool = False, output: Path | None = None) -> None:
         await capture(root, output, "notes-contrast", (100, 28), ("8",), theme="high-contrast")
         scenarios = [
             ("overview-wide", (140, 38), ()),
+            ("all-open-wide", (140, 38), ("1",)),
             ("find-open", (140, 38), ("/",)),
             ("find-results", (140, 38), ("/", "r", "e", "v", "i", "e", "w", "enter")),
             ("find-cleared", (140, 38), ("/", "r", "e", "v", "escape")),
@@ -127,6 +131,9 @@ async def main(*, notes_only: bool = False, output: Path | None = None) -> None:
             ("inspector-narrow", (60, 20), ("right",)),
             ("help-compact", (80, 24), ("h",)),
             ("due-compact", (60, 20), ("d",)),
+            ("dates-wide", (120, 36), ("d",)),
+            ("dates-scheduled", (80, 24), ("d", "tab")),
+            ("dates-small", (50, 16), ("d",)),
             ("add-compact", (60, 20), ("a",)),
             ("note-compact", (60, 20), ("n",)),
             ("open-vault", (120, 32), ("ctrl+o",)),

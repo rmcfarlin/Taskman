@@ -13,7 +13,7 @@ from tui.commands import Command, CommandScreen, rank_commands
 COMMANDS = [
     Command("add", "Add task", "a", "Capture a task in your inbox.", "new create"),
     Command("complete", "Complete task", "Space", "Mark the selected task complete.", "done finish check"),
-    Command("today", "Go to Today", "2", "Focus on tasks due today.", "view due"),
+    Command("now", "Go to Now", "2", "Tasks due or scheduled by today.", "view due scheduled"),
     Command("project", "Choose project", "j", "Assign the selected task to a project.", "move assign"),
     Command("delete", "Delete task", "Delete", "Delete the selected task.", enabled=False),
 ]
@@ -47,7 +47,7 @@ def test_ranking_supports_words_aliases_shortcuts_and_abbreviations():
     assert rank_commands(COMMANDS, " CMPL ")[0].id == "complete"
     assert rank_commands(COMMANDS, "task add")[0].id == "add"
     assert rank_commands(COMMANDS, "new")[0].id == "add"
-    assert rank_commands(COMMANDS, "2")[0].id == "today"
+    assert rank_commands(COMMANDS, "2")[0].id == "now"
     assert rank_commands(COMMANDS, "finish")[0].id == "complete"
     assert rank_commands(COMMANDS, "zzzzzz") == []
     assert rank_commands(COMMANDS, "") == COMMANDS

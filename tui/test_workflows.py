@@ -60,6 +60,7 @@ def test_commands_type_safely_then_dispatch_add(vault):
         app.action_save = lambda: save_calls.append(True)
         before = _files(vault)
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("ctrl+k")
             assert isinstance(app.screen, CommandScreen)
             await _type(pilot, "uadq1")
@@ -85,6 +86,7 @@ def test_command_shortcut_opens_from_search_and_closes_without_losing_query(vaul
         app = appmod.TaskApp(vault, theme="taskman-teal")
         before = _files(vault)
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("f")
             await _type(pilot, "Capture")
             search = app.query_one("#search", Input)
@@ -101,7 +103,7 @@ def test_command_shortcut_opens_from_search_and_closes_without_losing_query(vaul
 
 
 @pytest.mark.parametrize("title,view,project", [
-    ("Go to Today", "today", ""),
+    ("Go to Now", "now", ""),
     ("Go to All open", "all", ""),
     ("Open project: Alpha", "project", "Alpha"),
 ])
@@ -109,6 +111,7 @@ def test_command_navigation_clears_the_existing_search(vault, title, view, proje
     async def go():
         app = appmod.TaskApp(vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("f")
             await _type(pilot, "Capture")
             await pilot.press("enter")
@@ -125,6 +128,7 @@ def test_palette_preserves_the_highlighted_inspector_child(vault, action):
     async def go():
         app = appmod.TaskApp(vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 34)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Anchor parent")
             await pilot.press("alt+3", "tab")
             kids = app.query_one("#ins-kids", OptionList)
@@ -133,7 +137,7 @@ def test_palette_preserves_the_highlighted_inspector_child(vault, action):
             await pilot.press("ctrl+k")
             assert isinstance(app.screen, CommandScreen)
             assert app.screen.context == "Child target"
-            await _type(pilot, "Edit task" if action == "edit" else "Change due date")
+            await _type(pilot, "Edit task" if action == "edit" else "Change dates")
             await pilot.press("enter")
             if action == "edit":
                 assert isinstance(app.screen, appmod.EditScreen)
@@ -161,6 +165,7 @@ def test_branch_changes_restore_exact_bytes_with_undo_and_redo(vault, action):
         app = appmod.TaskApp(vault, theme="taskman-teal")
         before = _files(vault)
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Anchor parent")
             if action == "complete":
                 await pilot.press("space")
@@ -192,6 +197,7 @@ def test_add_in_a_new_project_can_remove_and_recreate_the_file(vault):
         before = _files(vault)
         project_file = vault / "Projects/Brand-New.md"
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("a")
             await _type(pilot, "Launch the new work")
             await pilot.press("tab")
@@ -214,6 +220,7 @@ def test_note_edit_undo_redo_and_typing_u_stay_in_the_editor(vault):
         app = appmod.TaskApp(vault, theme="taskman-teal")
         before = _files(vault)
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Capture idea")
             await pilot.press("n")
             await _type(pilot, "Useful follow up")
@@ -249,6 +256,7 @@ def test_conflicting_external_project_edit_blocks_all_restore_writes(vault, rest
         notices = []
         app.notify = lambda message, **kwargs: notices.append((str(message), kwargs))
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Capture idea")
             await pilot.press("j")
             await _type(pilot, "Fresh Project")
@@ -288,6 +296,7 @@ def test_failed_edit_notifies_without_crashing_or_changing_files(vault, monkeypa
         app.notify = lambda message, **kwargs: notices.append((str(message), kwargs))
         before = _files(vault)
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Capture idea")
             await pilot.press("e", "ctrl+shift+a")
             await _type(pilot, "Attempted change")
@@ -310,6 +319,7 @@ def test_read_details_from_child_palette_keeps_child_as_note_target(vault):
     async def go():
         app = appmod.TaskApp(vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 34)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Anchor parent")
             await pilot.press("alt+3", "tab")
             assert app.query_one("#ins-kids", OptionList).has_focus
@@ -336,6 +346,7 @@ def test_search_undo_keys_cannot_restore_task_history(vault, restore):
     async def go():
         app = appmod.TaskApp(vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await _select(pilot, app, "Capture idea")
             await pilot.press("space")
             assert app.history.can_undo

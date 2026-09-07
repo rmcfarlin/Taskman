@@ -124,15 +124,16 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_app_opens_on_all_open_with_sections_and_tree(tmp_path, monkeypatch):
+def test_all_open_keeps_sections_and_tree(tmp_path, monkeypatch):
     monkeypatch.delenv("TASKMAN_THEME", raising=False)
     root = _vault(tmp_path)
 
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(110, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
-            assert app.view == "all"                               # the requested default
+            assert app.view == "all"                               # explicitly selected All open
             tl = app.query_one(appmod.TaskList)
             assert tl.has_focus and tl.current is not None
             headers = [r.title for r in tl.rows if isinstance(r, appmod.HeaderRow) and r.title]
@@ -158,6 +159,7 @@ def test_app_project_picker_creates_and_tags(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(110, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tl = app.query_one(appmod.TaskList)
             # Put the cursor on "Renew passport" via search, then assign a NEW project.
@@ -205,6 +207,7 @@ def test_sidebar_browses_views_and_projects_one_step_at_a_time(tmp_path, monkeyp
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(110, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             sidebar = app.query_one(appmod.Sidebar)
             await pilot.press("tab")                                  # list -> sidebar
@@ -255,6 +258,7 @@ def test_app_note_editor_saves_under_task(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(110, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tl = app.query_one(appmod.TaskList)
             await pilot.press("f")                                   # Find
@@ -303,6 +307,7 @@ def test_inspector_pane_toggles_and_shows_subtasks(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(130, 34)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             insp = app.query_one(appmod.Inspector)
             tl = app.query_one(appmod.TaskList)
@@ -349,10 +354,11 @@ def test_table_has_column_header_and_columns(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(140, 34)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tl = app.query_one(appmod.TaskList)
             head = tl.render_line(0).text
-            for col in ("PRIO", "TASK", "DUE", "PROJECT", "TAGS"):
+            for col in ("PRIO", "TASK", "DATE", "PROJECT", "TAGS"):
                 assert col in head
             # The first task row (virtual line 2: header, then section header, then task).
             row = tl.render_line(2).text
@@ -363,8 +369,7 @@ def test_table_has_column_header_and_columns(tmp_path, monkeypatch):
             line = tl._render_task(ship, width).plain
             assert "⇈ hi" in line and "Alpha" in line             # PRIO glyph+word, PROJECT column
             assert head.index("PROJECT") == line.index("Alpha")   # columns line up under headers
-            assert head.index("DUE") == line.index("Thu 9/10") or head.index("DUE") == line.index(
-                appmod.format_due(ship.task.due, tl.day))
+            assert head.index("DATE") == line.index("Due " + appmod.format_due(ship.task.due, tl.day))
     _run(go())
 
 
@@ -380,6 +385,7 @@ def test_ctrl_s_confirms_local_autosave_without_executing_vault_scripts(tmp_path
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(120, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             task = app.query_one(appmod.TaskList).current
             await pilot.press("space")
@@ -390,9 +396,6 @@ def test_ctrl_s_confirms_local_autosave_without_executing_vault_scripts(tmp_path
             assert (root / task.file).read_bytes() == saved
             assert any("All changes saved to Markdown" in toast.render().plain
                        for toast in app.screen.query(Toast))
-            await pilot.press("ctrl+shift+s")                        # kitty-protocol terminals
-            await pilot.pause()
-            assert (root / task.file).read_bytes() == saved
     _run(go())
 
 
@@ -408,6 +411,7 @@ def test_explicit_theme_is_applied_at_startup(tmp_path, monkeypatch):
         app = appmod.TaskApp(root, theme="taskman-ember")
         assert app.theme == "taskman-ember" and app.theme_name == "taskman-ember"
         async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             assert app.theme == "taskman-ember"
             assert "Ember" in str(app.query_one("#clock").render())
@@ -424,6 +428,7 @@ def test_theme_picker_previews_reverts_and_keeps(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(120, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             assert app.theme == "taskman-teal"
             await pilot.press("m")                                   # theMe
@@ -460,6 +465,7 @@ def test_app_bracket_keys_indent_and_outdent(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(110, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tl = app.query_one(appmod.TaskList)
             await pilot.press("f")
@@ -486,6 +492,7 @@ def test_app_toggle_and_status_keys(tmp_path, monkeypatch):
     async def go():
         app = appmod.TaskApp(root, theme="textual-dark")
         async with app.run_test(notifications=True, size=(110, 32)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tl = app.query_one(appmod.TaskList)
             await pilot.press("slash")

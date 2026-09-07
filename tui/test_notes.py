@@ -234,15 +234,17 @@ def test_failed_create_does_not_remove_a_replacement_file(tmp_path, monkeypatch)
     store = nm.NotesStore(tmp_path)
     path = tmp_path / "Notes" / "Failed.md"
     original_path_check = store._path
-    checks = 0
+    failed = False
     def path_check(file):
-        nonlocal checks
-        checks += 1
-        if checks == 3:  # Cleanup after closing the failed write.
+        nonlocal failed
+        if failed:  # Cleanup after closing the failed write, regardless of validation calls.
+            failed = False
             path.rename(path.with_suffix(".partial"))
             path.write_text("Externally replaced content", encoding="utf-8")
         return original_path_check(file)
     def fsync(_fd):
+        nonlocal failed
+        failed = True
         raise OSError("sync failed")
     monkeypatch.setattr(store, "_path", path_check)
     monkeypatch.setattr(nm.os, "fsync", fsync)

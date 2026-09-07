@@ -15,7 +15,7 @@ The table is a Line-API widget (TaskList): it renders only the visible
 lines, so thousands of tasks scroll instantly. Rows are grouped into
 sections (Overdue · Today · Tomorrow · Next 7 days · Later · No date) and
 sub-tasks hang under their parent with tree guides. Columns — PRIO · TASK ·
-DUE · PROJECT · TAGS — flex with the width; the right-hand ones hide on
+DATE · PROJECT · TAGS — flex with the width; the right-hand ones hide on
 narrow terminals rather than wrap.
 
 Accessibility notes (please keep these true when editing)
@@ -30,7 +30,7 @@ Accessibility notes (please keep these true when editing)
     Session undo/redo checks for external edits before restoring files.
     Ctrl+O opens another vault. Task changes save immediately to Markdown.
   - --plain mode (taskman.py) prints the same data as plain text for
-    screen readers and pipes:  python -m tui --plain today
+    screen readers and pipes:  python -m tui --plain now
   - Honors NO_COLOR: set it to force the high-contrast monochrome theme.
 """
 
@@ -40,7 +40,7 @@ import datetime as dt
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Callable, Union
 from contextlib import contextmanager
@@ -70,7 +70,7 @@ try:  # `python -m tui` (package) vs `python tui/app.py` (script)
     from tui.history import History, HistoryConflict
     from tui.shortcut_bar import ShortcutBar
     from tui.diagnostics import record_error
-    from tui import settings
+    from tui import settings, git_sync
     from tui.vaults import discover_vault, initialize_vault, normalize_folder
     from tui.vault_screen import VaultScreen, VaultChoice
     from tui.notes import NotesStore, NoteConflict
@@ -84,6 +84,7 @@ except ImportError:  # pragma: no cover -- direct-script fallback
     from shortcut_bar import ShortcutBar
     from diagnostics import record_error
     import settings
+    import git_sync
     from vaults import discover_vault, initialize_vault, normalize_folder
     from vault_screen import VaultScreen, VaultChoice
     from notes import NotesStore, NoteConflict
@@ -93,7 +94,7 @@ except ImportError:  # pragma: no cover -- direct-script fallback
 # Views shown in the sidebar: (hotkey, view-name, label). Order = 1..7 keys.
 SIDEBAR_VIEWS: tuple[tuple[str, str, str], ...] = (
     ("1", "all", "All open"),
-    ("2", "today", "Today"),
+    ("2", "now", "Now"),
     ("3", "overdue", "Overdue"),
     ("4", "next7", "Next 7 days"),
     ("5", "inbox", "Inbox"),
@@ -102,10 +103,10 @@ SIDEBAR_VIEWS: tuple[tuple[str, str, str], ...] = (
 )
 VIEW_LABEL = {name: label for _, name, label in SIDEBAR_VIEWS}
 VIEW_ICON = {
-    "all": "≡", "today": "☀", "overdue": "⚠", "next7": "◷",
+    "all": "≡", "now": "☀", "overdue": "⚠", "next7": "◷",
     "inbox": "▤", "priority": "▲", "completed": "✓", "project": "◆",
 }
-DEFAULT_VIEW = "all"
+DEFAULT_VIEW = "now"
 
 # Status char -> (glyph, component-class suffix). Glyph shapes differ, so
 # status never relies on color alone.
@@ -354,7 +355,7 @@ def _mday(d: dt.date) -> str:
 
 
 def format_due(d: dt.date, day: dt.date) -> str:
-    """Short words for the Due column (≤ 10 cells; the inspector has the ISO)."""
+    """Short relative due words (≤ 10 cells; the inspector has the ISO)."""
     if d < day:
         return f"{(day - d).days}d late"
     if d == day:
@@ -394,7 +395,7 @@ def format_date_long(d: dt.date, day: dt.date, past: str = "ago") -> str:
 EMPTY_STATE = {
     "all": "No open tasks — press a to add one.",
     "inbox": "Inbox is clear. Press a to capture a thought.",
-    "today": "Nothing due today. Press d on a task to schedule it here.",
+    "now": "Nothing needs attention now. Press 1 to plan tasks with d.",
     "overdue": "Nothing overdue. Nice.",
     "next7": "Nothing due in the next 7 days.",
     "completed": "Nothing completed yet. Press c on a task when it's done.",
@@ -431,7 +432,7 @@ Row = Union[HeaderRow, TaskRow]
 class TaskList(ScrollView, can_focus=True):
     """A table of sections + task trees, one line per row, rendered lazily.
 
-    Line 0 is a fixed column header (PRIO · TASK · DUE · PROJECT · TAGS);
+    Line 0 is a fixed column header (PRIO · TASK · DATE · PROJECT · TAGS);
     the rows scroll underneath it. Section header rows are decoration: the
     cursor hops over them. Column widths come from the widget width on
     every render, so resizing just works. Styling is 100% via component
@@ -540,6 +541,7 @@ class TaskList(ScrollView, can_focus=True):
         self.rows: list[Row] = []
         self.cursor: int = -1
         self.day: dt.date = dt.date.today()
+        self.view = DEFAULT_VIEW
         self.empty_message: str = "Nothing here."
         self._cache: dict[tuple, Strip] = {}
 
@@ -699,8 +701,8 @@ class TaskList(ScrollView, can_focus=True):
         return self._style(name)
 
     def _columns(self, width: int) -> tuple[int, int, int, int]:
-        """(task, due, project, tags) widths; right-hand columns hide when narrow."""
-        due_w = 10 if width >= 50 else 0
+        """(task, date, project, tags) widths; right-hand columns hide when narrow."""
+        due_w = 16 if width >= 50 else 0
         proj_w = min(16, max(8, width // 9)) if width >= 76 else 0
         tags_w = min(20, max(10, width // 8)) if width >= 94 else 0
         fixed = 1 + 1 + 1 + 5 + 1 + 1   # pad, status, gap, prio, gap, right pad
@@ -764,7 +766,7 @@ class TaskList(ScrollView, can_focus=True):
         line.append("TASK".ljust(task_w), head)
         if due_w:
             line.append(" ")
-            line.append("DUE".ljust(due_w), head)
+            line.append("DATE".ljust(due_w), head)
         if proj_w:
             line.append(" ")
             line.append("PROJECT".ljust(proj_w), head)
@@ -808,14 +810,20 @@ class TaskList(ScrollView, can_focus=True):
             if ref is None:
                 return "", "muted"
             return ("✓ " if t.done else "✕ ") + _mday(ref), "muted"
-        if t.due is None:
+        kind, date = tm.now_date(t, day) if self.view == "now" else (
+            ("due", t.due) if t.due else ("scheduled", t.scheduled))
+        if date is None:
             return "", "muted"
-        words = format_due(t.due, day)
-        if t.due < day:
+        if kind == "scheduled":
+            words = _mday(date) if date < day and date.year == day.year else (
+                date.isoformat() if date < day else format_due(date, day))
+            return "Sched " + words, "today" if date <= day else "later"
+        words = "Due " + format_due(date, day)
+        if date < day:
             return words, "overdue"
-        if t.due == day:
+        if date == day:
             return words, "today"
-        if t.due <= day + dt.timedelta(days=7):
+        if date <= day + dt.timedelta(days=7):
             return words, "soon"
         return words, "later"
 
@@ -1137,11 +1145,20 @@ class Inspector(VerticalScroll, can_focus=True):
                 style = palette("today")
             fact("due", format_date_long(t.due, day, past="late" if t.open else "ago"), style)
         else:
-            fact("due", "unscheduled", "dim")
+            fact("due", "no due date", "dim")
         if t.scheduled:
             fact("scheduled", format_date_long(t.scheduled, day))
+        else:
+            fact("scheduled", "no scheduled date", "dim")
         if t.start:
             fact("start", format_date_long(t.start, day))
+        if t.recurrence:
+            fact("repeat", t.recurrence)
+            warning = tm.recurrence_warning(t)
+            if warning:
+                fact("repeat note", warning, palette("overdue"))
+            elif t.recurrence_next:
+                fact("repeat note", "Next occurrence already created", "dim")
         fact("status", t.status_label)
         if t.done_date:
             fact("done", format_date_long(t.done_date, day))
@@ -1289,6 +1306,16 @@ class AddScreen(ModalScreen["dict | None"]):
             self.query_one("#form-error", Label).update("Give your task a name.")
             self.query_one("#text", Input).focus()
             return
+        probe = tm.parse_task_line(f"- [ ] {text}")
+        if probe and probe.recurrence:
+            try:
+                tm.normalize_recurrence(probe.recurrence)
+                if not (probe.due or probe.scheduled or probe.start):
+                    raise ValueError("Repeat needs a date. Add 📅 YYYY-MM-DD or set Repeat later in Dates.")
+            except ValueError as error:
+                self.query_one("#form-error", Label).update(Text(str(error)))
+                self.query_one("#text", Input).focus()
+                return
         if proj:
             try:
                 proj = validate_project_name(proj, getattr(self.app, "vault", None))
@@ -1343,6 +1370,10 @@ class EditScreen(ModalScreen["str | None"]):
             self.query_one("#form-error", Label).update("The task name cannot be empty.")
             self.query_one("#text", Input).focus()
             return
+        if "🔁" in value and value != self._initial:
+            self.query_one("#form-error", Label).update("Use Dates to change Repeat.")
+            self.query_one("#text", Input).focus()
+            return
         self.dismiss(value)
 
     @on(Button.Pressed)
@@ -1353,63 +1384,144 @@ class EditScreen(ModalScreen["str | None"]):
             self.dismiss(None)
 
 
-class DueScreen(ModalScreen["str | None"]):
-    """Returns 'today', 'tomorrow', '+N', 'YYYY-MM-DD', 'clear', or None."""
+class DatesScreen(ModalScreen[bool | None]):
+    """Edit dates and recurrence together; retain drafts until storage succeeds."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    REPEAT_PRESETS = (
+        ("none", "None"),
+        ("every day", "Every day"),
+        ("every weekday", "Every weekday (Mon–Fri)"),
+        ("every week", "Every week"),
+        ("every 2 weeks", "Every 2 weeks"),
+        ("every week on Monday, Wednesday, Friday", "Every Monday, Wednesday, Friday"),
+        ("every month", "Every month"),
+        ("every month on the 1st", "Every month on the 1st"),
+        ("every month on the last", "Every month on the last day"),
+        ("every year", "Every year"),
+        ("every week when done", "Every week from completion"),
+    )
 
-    def __init__(self, current: dt.date | None = None) -> None:
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+s,ctrl+shift+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(self, due: dt.date | None = None, scheduled: dt.date | None = None,
+                 *, recurrence: str = "", start: dt.date | None = None,
+                 focus_repeat: bool = False,
+                 save: Callable[[dt.date | None, dt.date | None, str], None] | None = None) -> None:
         super().__init__()
-        self._current = current
+        self._current = due
+        self._scheduled = scheduled
+        self._recurrence = recurrence
+        self._start = start
+        self._focus_repeat = focus_repeat
+        self._save = save
+        self._date_target = "due"
 
     def action_cancel(self) -> None:
         self.dismiss(None)
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="dlg") as dlg:
-            dlg.border_title = "Due date"
-            dlg.border_subtitle = "Enter = set · Esc = cancel"
-            cur = f"Now {self._current.isoformat()}" if self._current else "No due date yet"
-            yield Label(f"{cur}  ·  today · tomorrow · mon · +7 · YYYY-MM-DD · clear",
-                        classes="field first")
-            yield TaskInput(placeholder="today", id="text")
-            yield Label("", id="form-error", classes="form-error")
+        with Vertical(id="dlg", classes="dates") as dlg:
+            dlg.border_title = "Dates"
+            dlg.border_subtitle = "Enter / Ctrl+S save · Esc cancel"
+            yield Label("today · tomorrow · mon · +7 · YYYY-MM-DD · clear", id="date-help", classes="field first")
+            yield Label("Due — deadline", id="due-label", classes="field")
+            yield TaskInput(value=self._current.isoformat() if self._current else "",
+                            placeholder="No due date", id="due")
+            yield Label("Scheduled — when to work on it", id="scheduled-label", classes="field")
+            yield TaskInput(value=self._scheduled.isoformat() if self._scheduled else "",
+                            placeholder="No scheduled date", id="scheduled")
+            yield Label("Quick set: Due", id="date-target", classes="field")
             with Horizontal(classes="btns quick"):
                 yield Button("Today", id="q-today")
                 yield Button("Tomorrow", id="q-tomorrow")
                 yield Button("+7 days", id="q-week")
                 yield Button("Clear", id="q-clear")
+            yield Label("Repeat — type a rule or choose a preset", classes="field", id="repeat-label")
+            with Horizontal(id="repeat-row"):
+                yield TaskInput(value=self._recurrence, placeholder="none / every week / every month on the last",
+                                id="repeat")
+                yield Button("Presets", id="repeat-presets")
+            yield Label("", id="form-error", classes="form-error")
             with Horizontal(classes="btns"):
-                yield Button("Set", variant="primary", id="ok")
+                yield Button("Save", variant="primary", id="ok")
                 yield Button("Cancel", id="cancel")
 
     def on_mount(self) -> None:
-        self.query_one("#text", Input).focus()
+        field = self.query_one("#repeat" if self._focus_repeat else "#due", Input)
+        field.focus()
+        field.action_select_all()
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        if event.widget.id in ("due", "scheduled"):
+            self._date_target = event.widget.id
+            self.query_one("#date-target", Label).update(f"Quick set: {self._date_target.title()}")
 
     @on(Input.Submitted)
     def _enter(self, _e: Input.Submitted) -> None:
-        self._submit()
+        self.action_save()
 
-    def _submit(self) -> None:
-        value = self.query_one("#text", Input).value.strip()
-        if TaskApp.parse_due_text(value) == "invalid":
-            self.query_one("#form-error", Label).update(
-                "Try today, tomorrow, a weekday, +7, YYYY-MM-DD, or clear.")
-            self.query_one("#text", Input).focus()
+    def action_save(self) -> None:
+        parsed = []
+        for name in ("due", "scheduled"):
+            field = self.query_one(f"#{name}", Input)
+            try:
+                parsed.append(tm.parse_date(field.value))
+            except ValueError:
+                self.query_one("#form-error", Label).update(
+                    f"{name.title()}: use today, tomorrow, mon, +7, a date, or clear.")
+                field.focus()
+                return
+        repeat_field = self.query_one("#repeat", Input)
+        repeat = repeat_field.value.strip()
+        try:
+            if repeat != self._recurrence or not repeat:
+                repeat = tm.normalize_recurrence(repeat)
+            if repeat and not any((*parsed, self._start)):
+                raise ValueError("Repeat needs a due, scheduled, or start date. Set a date or choose none.")
+        except ValueError as exc:
+            self.query_one("#form-error", Label).update(str(exc))
+            repeat_field.focus()
             return
-        self.dismiss(value)
+        try:
+            if self._save:
+                self._save(*parsed, repeat)
+        except (OSError, ValueError, HistoryConflict) as exc:
+            self.query_one("#form-error", Label).update(f"Could not save: {exc}")
+            return
+        self.dismiss(True)
 
     @on(Button.Pressed)
     def _btn(self, e: Button.Pressed) -> None:
-        quick = {"q-today": "today", "q-tomorrow": "tomorrow", "q-week": "+7",
-                 "q-clear": "clear"}
+        quick = {"q-today": "today", "q-tomorrow": "tomorrow", "q-week": "+7", "q-clear": ""}
         if e.button.id in quick:
-            self.dismiss(quick[e.button.id])
+            field = self.query_one(f"#{self._date_target}", Input)
+            field.value = quick[e.button.id]
+            field.focus()
+            field.action_select_all()
+            self.query_one("#form-error", Label).update("")
         elif e.button.id == "ok":
-            self._submit()
+            self.action_save()
+        elif e.button.id == "repeat-presets":
+            field = self.query_one("#repeat", Input)
+
+            def choose(rule: str | None) -> None:
+                if rule is not None:
+                    field.value = "" if rule == "none" else rule
+                field.focus()
+                field.action_select_all()
+
+            self.app.push_screen(PickScreen("Repeat", [(rule, Text(label)) for rule, label in self.REPEAT_PRESETS],
+                                            current=field.value or "none",
+                                            hint="Enter choose · type a custom rule in Repeat"), choose)
         else:
             self.dismiss(None)
 
+
+# Compatibility for integrations that used the earlier dialog class name.
+DueScreen = DatesScreen
 
 class PickScreen(ModalScreen["str | None"]):
     """Generic chooser: options are (id, Text); returns the picked id."""
@@ -1736,7 +1848,7 @@ class HelpScreen(ModalScreen[None]):
     SECTIONS = (
         ("Navigate", (
             ("Ctrl+K  or  :", "Commands — search every action, view, and project"),
-            ("1–7", "views: All open · Today · Overdue · Next 7 · Inbox · Priority · Completed"),
+            ("1–7", "views: All open · Now · Overdue · Next 7 · Inbox · Priority · Completed"),
             ("Tab / Shift+Tab", "next / previous pane or field"),
             ("Alt+1 / 2 / 3", "focus views / tasks / inspector; ← → move between panes"),
             ("PgUp / PgDn", "scroll the focused list, inspector, or help"),
@@ -1754,7 +1866,7 @@ class HelpScreen(ModalScreen[None]):
             ("n", "Note — a full text field saved under the task in the markdown"),
             ("c", "Complete — toggle done; the whole branch flips together (Space works too)"),
             ("s", "Status: open · in progress · done · forwarded · cancelled · question"),
-            ("d", "Due date (today · tomorrow · weekday · +7 · date · clear)"),
+            ("d", "Dates — due, scheduled, and Repeat; Enter / Ctrl+S saves together"),
             ("p", "Priority"),
             ("j", "proJect — filter the list, or type a new name to create one"),
             ("]  /  [", "indent under the previous task  /  outdent"),
@@ -1777,6 +1889,7 @@ class HelpScreen(ModalScreen[None]):
         ("App", (
             ("Ctrl+O", "Open Vault — browse folders, recent vaults, or set up a new folder"),
             ("Ctrl+S", "Confirm saved — task changes save immediately to Markdown"),
+            ("Ctrl+Shift+S", "Commit and push this vault to its existing Git remote"),
             ("m", "theMe — Teal · Ocean · Ember · Iris · Moss · Darcula · One Dark · Dark Teal (+ Light, High contrast)"),
             ("h", "Help — this screen"),
             ("q", "Quit"),
@@ -1906,6 +2019,15 @@ class TaskApp(NotesActions, App):
     #dlg .key { margin: 0 0 1 0; }
     #dlg .hint { color: $text-muted; margin-top: 1; }
     #dlg .form-error { height: auto; color: $text-error; }
+    #dlg.dates { padding: 0 1; }
+    #dlg.dates .field { margin-top: 0; }
+    #dlg.dates Input { height: 1; border: none; background: $panel; padding: 0 1; }
+    #dlg.dates Input:focus { background: $primary 25%; }
+    #dlg.dates .btns { height: 1; margin-top: 0; }
+    #dlg.dates .btns Button { height: 1; border: none; }
+    #dlg.dates #repeat-row { height: 1; }
+    #dlg.dates #repeat { width: 1fr; }
+    #dlg.dates #repeat-presets { height: 1; border: none; min-width: 9; width: 9; margin-left: 1; }
     #dlg.help { width: 92; height: 90%; overflow-y: hidden; }
     #help-content { height: 1fr; padding: 0 1; border: none; }
     #help-content:focus { border-left: solid $accent; }
@@ -1932,7 +2054,7 @@ class TaskApp(NotesActions, App):
         Binding("ctrl+t", "task_from_reference", "Create task from note", show=False),
         Binding("l", "link_reference", "Link note", show=False),
         Binding("k", "linked_references", "Linked notes / tasks", show=False),
-        Binding("d", "due", "Due"),
+        Binding("d", "due", "Dates"),
         Binding("p", "priority", "Priority", show=False),
         Binding("s", "status", "Status", show=False),
         Binding("t", "add_sub", "Subtask", show=False),
@@ -1949,7 +2071,8 @@ class TaskApp(NotesActions, App):
         Binding("alt+2", "focus_tasks", "Focus tasks", show=False),
         Binding("alt+3", "focus_inspector", "Focus inspector", show=False),
         # Hidden (documented in Help)
-        Binding("ctrl+shift+s,ctrl+s", "save", "Saved to Markdown", show=False),
+        Binding("ctrl+s", "save", "Saved to Markdown", show=False),
+        Binding("ctrl+shift+s", "push_vault", "Push vault", show=False),
         Binding("o", "open_note", "Open in editor", show=False),
         Binding("r", "refresh", "Rescan", show=False),
         Binding("right_square_bracket", "indent", "Indent", show=False),
@@ -1961,6 +2084,10 @@ class TaskApp(NotesActions, App):
         Binding("5", "view_4", show=False), Binding("6", "view_5", show=False),
         Binding("7", "view_6", show=False),
     ]
+
+    def get_driver_class(self):
+        from tui.terminal import preserve_windows_modifiers
+        return preserve_windows_modifiers(super().get_driver_class())
 
     def __init__(self, vault: str | Path | None = None,
                  theme: str | None = None, *, choose_vault: bool = False) -> None:
@@ -1977,6 +2104,7 @@ class TaskApp(NotesActions, App):
         self._selected_note_file = ""
         self.history = History(self.vault)
         self._opening_vault = False
+        self._pushing_vault = False
         self._open_generation = 0
         self._command_target: Task | None = None
         self._inspected_task: Task | None = None
@@ -1985,6 +2113,7 @@ class TaskApp(NotesActions, App):
         self._error_recorded = False
         self.view = DEFAULT_VIEW
         self.project = ""
+        self._display_date = dt.date.today()
         self.search_query = ""
         self._context_ids: set[str] = set()
         self._summary = ""            # "17 open · 3 due ≤7d · 2 overdue" for the top bar
@@ -2004,7 +2133,8 @@ class TaskApp(NotesActions, App):
         if action in ("undo", "redo") and isinstance(self.focused, (Input, TextArea)):
             return False
         if isinstance(self.screen, ModalScreen) and action in {
-                "new_reference", "task_from_reference", "notes", "link_reference", "linked_references"}:
+                "new_reference", "task_from_reference", "notes", "link_reference", "linked_references",
+                "push_vault"}:
             return False
         return True
 
@@ -2113,6 +2243,9 @@ class TaskApp(NotesActions, App):
             self.notify(f"Vault opened; recent folders could not be saved: {exc}", severity="warning", markup=False)
 
     def action_open_vault(self) -> None:
+        if self._pushing_vault:
+            self.notify("Wait for the current push to finish before opening another vault.", markup=False)
+            return
         if isinstance(self.screen, (VaultScreen, OpeningVaultScreen)):
             return
         if isinstance(self.screen, ModalScreen):
@@ -2194,6 +2327,12 @@ class TaskApp(NotesActions, App):
         now = dt.datetime.now()
         self.query_one("#clock", Label).update(
             f"{self.theme_label}  ·  {now.strftime('%a %b')} {now.day}  {now.strftime('%H:%M')}")
+        if (self._vault_ready and not self._opening_vault
+                and not isinstance(self.screen, ModalScreen)
+                and self._display_date != dt.date.today()):
+            # Membership and relative dates change at midnight even if files do not.
+            # Leave active editor drafts and their navigation undisturbed.
+            self.refresh_tasks(reload=False)
 
     def on_resize(self, _event: events.Resize) -> None:
         if self.is_mounted:
@@ -2243,6 +2382,7 @@ class TaskApp(NotesActions, App):
         """
         if not self._vault_ready:
             return
+        self._display_date = dt.date.today()
         self._notes = self.notes_store.refresh()
         self._sync_notes_mode()
         if self.view == "notes":
@@ -2276,6 +2416,7 @@ class TaskApp(NotesActions, App):
                                     tm.progress_of(kids, node.task), node.task.context))
         self._context_ids = {t.id for t in matches if t.context}
         tl.day = day
+        tl.view = self.view
         tl.empty_message = EMPTY_STATE["search"] if self.search_query else EMPTY_STATE.get(
             self.view, EMPTY_STATE["all"])
         tl.set_rows(rows, keep_id=keep_id, select=select)
@@ -2380,6 +2521,16 @@ class TaskApp(NotesActions, App):
                    "note_project": self.note_project}
         with self.history.record(label, paths, context=context):
             yield
+
+    @contextmanager
+    def _task_record(self, task: Task, label: str, extra_paths: list[str] | None = None):
+        """Resolve before capturing history so moved tasks undo in their current file."""
+        with tm.vault_write_lock(self.vault):
+            current = tm.fresh_task(self.vault, task)
+            for field in fields(Task):
+                setattr(task, field.name, getattr(current, field.name))
+            with self._record(label, [task.file, *(extra_paths or [])]):
+                yield
 
     def _restore_history(self, redo: bool = False) -> None:
         try:
@@ -2505,10 +2656,10 @@ class TaskApp(NotesActions, App):
         if kid is None:
             return
         parent = self._selected()
-        with self._record("Complete subtask" if not kid.done else "Reopen subtask", [kid.file]):
+        with self._task_record(kid, "Complete subtask" if not kid.done else "Reopen subtask"):
             tm.toggle(self.vault, kid)
         self.refresh_tasks(keep_id=parent.id if parent else None)
-        self.announce(f"{'Done' if kid.done else 'Reopened'}: {kid.description or kid.id}")
+        self._announce_completion(kid, f"{'Done' if kid.done else 'Reopened'}: {kid.description or kid.id}")
         ol = self.query_one("#ins-kids", OptionList)
         if ol.option_count:
             ol.highlighted = min(e.option_index, ol.option_count - 1)
@@ -2543,33 +2694,29 @@ class TaskApp(NotesActions, App):
     @guard_change
     def toggle_task(self, t: Task) -> None:
         _open, total = tm.open_subtask_count(self.store.tasks, t)
-        with self._record("Complete task" if not t.done else "Reopen task", [t.file]):
+        with self._task_record(t, "Complete task" if not t.done else "Reopen task"):
             tm.toggle(self.vault, t)
         self.refresh_tasks(keep_id=t.id)
         extra = f" (+{total} sub-task{'s' if total != 1 else ''})" if total else ""
-        self.announce(f"{'Done' if t.done else 'Reopened'}: {t.description or t.id}{extra}")
+        self._announce_completion(t, f"{'Done' if t.done else 'Reopened'}: {t.description or t.id}{extra}")
+
+    def _announce_completion(self, task: Task, message: str) -> None:
+        if task.done and task.recurrence:
+            warning = tm.recurrence_warning(task)
+            if warning:
+                self.notify(f"{message}. {warning}", title="Repeat", severity="warning", timeout=9, markup=False)
+                return
+            if task.recurrence_next:
+                message += " · next occurrence already created"
+        self.announce(message)
 
     @staticmethod
     def parse_due_text(raw: str, day: dt.date | None = None) -> "dt.date | None | str":
         """'today'→date, 'tomorrow'→date, '+N'→date, 'YYYY-MM-DD'→date,
         'clear'→None, anything else→'invalid'."""
-        s = raw.strip().casefold()
-        day = day or dt.date.today()
-        if s in ("clear", "none", "-"):
-            return None
-        if s in ("today", "tod"):
-            return day
-        if s in ("tomorrow", "tom"):
-            return day + dt.timedelta(days=1)
-        weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-        for index, name in enumerate(weekdays):
-            if s in (name, name[:3]):
-                return day + dt.timedelta(days=(index - day.weekday()) % 7 or 7)
         try:
-            if s.startswith("+") and s[1:].isdigit():
-                return day + dt.timedelta(days=int(s[1:]))
-            return dt.date.fromisoformat(raw.strip())
-        except (ValueError, OverflowError):
+            return tm.parse_date(raw, day)
+        except ValueError:
             return "invalid"
 
     @guard_change
@@ -2579,7 +2726,7 @@ class TaskApp(NotesActions, App):
             self.announce("Due date not understood — use today / tomorrow / +7 / YYYY-MM-DD / clear")
             return False
         assert parsed is None or isinstance(parsed, dt.date)
-        with self._record("Change due date", [t.file]):
+        with self._task_record(t, "Change due date"):
             tm.set_due(self.vault, t, parsed)
         self.refresh_tasks(keep_id=t.id)
         self.announce(f"Due {'cleared' if parsed is None else format_date_long(parsed, dt.date.today())}")
@@ -2587,15 +2734,15 @@ class TaskApp(NotesActions, App):
 
     @guard_change
     def apply_status(self, t: Task, status: str) -> None:
-        with self._record("Change status", [t.file]):
+        with self._task_record(t, "Change status"):
             if status in ("x", "X") and not t.done:
-                tm.toggle(self.vault, t)       # branch semantics + ✅ stamp
+                tm.complete(self.vault, t)     # explicit completion + branch semantics
             elif status == " " and t.done:
                 tm.toggle(self.vault, t)       # reopen the branch
             else:
                 tm.set_status(self.vault, t, status)
         self.refresh_tasks(keep_id=t.id)
-        self.announce(f"Status: {t.status_label}")
+        self._announce_completion(t, f"Status: {t.status_label}")
 
     def edit_note(self, t: Task, after: "Callable[[], None] | None" = None) -> None:
         """Open the note editor for ``t``; save straight into the markdown."""
@@ -2605,7 +2752,7 @@ class TaskApp(NotesActions, App):
             if text.strip() == (t.note or "").strip():
                 self.announce("Note unchanged")
             else:
-                with self._record("Edit note", [t.file]):
+                with self._task_record(t, "Edit note"):
                     tm.set_note(self.vault, t, text)
                 self.refresh_tasks(keep_id=t.id)
                 self.announce("Note cleared" if not text.strip() else "Note saved")
@@ -2616,8 +2763,8 @@ class TaskApp(NotesActions, App):
     @guard_change
     def apply_project(self, t: Task, project: str) -> None:
         project = tm.clean_project_name(project)
-        paths = [t.file] + ([f"Projects/{project}.md"] if project else [])
-        with self._record("Change project", paths):
+        paths = [f"Projects/{project}.md"] if project else []
+        with self._task_record(t, "Change project", paths):
             if project:
                 _path, created = tm.ensure_project_file(self.vault, project)
             else:
@@ -2634,6 +2781,34 @@ class TaskApp(NotesActions, App):
     def action_save(self) -> None:
         self.announce("All changes saved to Markdown")
 
+    def action_push_vault(self) -> None:
+        if not self._vault_ready or self._opening_vault or isinstance(self.screen, ModalScreen):
+            return
+        if self._pushing_vault:
+            self.announce("A vault push is already running")
+            return
+        self._pushing_vault = True
+        self.notify("Committing and pushing vault changes…", title="Git", markup=False)
+        self._push_vault(self.vault)
+
+    @work(thread=True, group="push-vault", exit_on_error=False)
+    def _push_vault(self, root: Path) -> None:
+        try:
+            result = git_sync.push_vault(root)
+            message, failed = result.message, False
+        except (OSError, ValueError) as exc:
+            message, failed = str(exc), True
+        try:
+            self.call_from_thread(self._finish_vault_push, message, failed)
+        except RuntimeError:
+            if self.is_running:
+                raise
+
+    def _finish_vault_push(self, message: str, failed: bool) -> None:
+        self._pushing_vault = False
+        self.notify(message, title="Could not push vault" if failed else "Git",
+                    severity="error" if failed else "information", timeout=8, markup=False)
+
     # -- actions --------------------------------------------------------------
     def action_commands(self) -> None:
         if isinstance(self.screen, CommandScreen):
@@ -2647,7 +2822,8 @@ class TaskApp(NotesActions, App):
             ("add", "Add task", "a", "Capture a task in Inbox or the current project", "new create capture", True),
             ("toggle", "Reopen task" if target and target.done else "Complete task", "Space", "Toggle the selected task and its subtasks", "done check finish", has_task),
             ("edit", "Edit task", "e", "Change the selected task's text", "rename text", has_task),
-            ("due", "Change due date", "d", "Today, tomorrow, a weekday, +7, or a date", "schedule postpone deadline", has_task),
+            ("due", "Change dates", "d", "Set due, scheduled, and repeat together", "due date schedule postpone deadline today tomorrow", has_task),
+            ("recurrence", "Set recurrence", "", "Repeat a task daily, weekly, monthly, or yearly", "repeat recurring cadence when done", has_task),
             ("priority", "Change priority", "p", "Set how urgent this task is", "high low important", has_task),
             ("status", "Change status", "s", "Open, in progress, completed, or cancelled", "start progress cancel", has_task),
             ("project", "Assign project", "j", "Choose a project or create one", "move organize", has_task),
@@ -2664,6 +2840,7 @@ class TaskApp(NotesActions, App):
             ("refresh", "Rescan vault", "r", "Reload changes made in Obsidian or your editor", "refresh sync", True),
             ("open_note", "Open source note", "o", "Open this Markdown file in your editor", "file markdown", has_task),
             ("save", "Save changes", "Ctrl+S", "Task changes are saved automatically to Markdown", "save files", True),
+            ("push_vault", "Push vault", "Ctrl+Shift+S", "Commit vault changes and push to the existing Git remote", "git github remote sync upload backup", not self._pushing_vault),
             ("open_vault", "Open Vault…", "Ctrl+O", "Choose a folder or set up a new vault", "folder switch recent workspace", True),
             ("help", "Keyboard guide", "h / F1", "Browse all shortcuts and interactions", "help keys", True),
             ("quit", "Quit Taskman", "q", "Task changes are already saved to Markdown", "exit close", True),
@@ -2673,7 +2850,7 @@ class TaskApp(NotesActions, App):
         if self.view == "notes":
             commands = [command for command in commands if command.id in {
                 "undo", "redo", "focus_search", "theme", "refresh", "open_note", "save",
-                "open_vault", "help", "quit"}]
+                "open_vault", "push_vault", "help", "quit"}]
             commands = [Command(command.id, "Find notes" if command.id == "focus_search" else command.title,
                                 command.shortcut,
                                 "Search titles, content, categories, tags, and projects" if command.id == "focus_search" else command.description,
@@ -2889,7 +3066,7 @@ class TaskApp(NotesActions, App):
         def _done(res: dict | None) -> None:
             if not res:
                 return
-            with self._record("Add subtask", [t.file]):
+            with self._task_record(t, "Add subtask"):
                 nt = tm.add_subtask(self.vault, t, res["text"])
             self._show_new_task(nt, self.project)
             self.announce(f"Added sub-task under {t.description or t.id}")
@@ -2905,7 +3082,7 @@ class TaskApp(NotesActions, App):
 
         def _done(res: str | None) -> None:
             if res:
-                with self._record("Edit task", [t.file]):
+                with self._task_record(t, "Edit task"):
                     tm.edit_text(self.vault, t, res)
                 self.refresh_tasks(keep_id=t.id)
                 self.announce("Saved")
@@ -2916,7 +3093,7 @@ class TaskApp(NotesActions, App):
         t = self._selected()
         if not t:
             return
-        with self._record("Indent task", [t.file]):
+        with self._task_record(t, "Indent task"):
             result = tm.indent_task(self.vault, t)
         if result is None:
             self.announce("Cannot indent — no previous task to nest under")
@@ -2929,7 +3106,7 @@ class TaskApp(NotesActions, App):
         t = self._selected()
         if not t:
             return
-        with self._record("Outdent task", [t.file]):
+        with self._task_record(t, "Outdent task"):
             result = tm.outdent_task(self.vault, t)
         if result is None:
             self.announce("Already top-level — nothing to lift")
@@ -2938,14 +3115,27 @@ class TaskApp(NotesActions, App):
         self.announce("Lifted one level")
 
     def action_due(self) -> None:
+        self._edit_dates()
+
+    def action_recurrence(self) -> None:
+        self._edit_dates(focus_repeat=True)
+
+    def _edit_dates(self, *, focus_repeat: bool = False) -> None:
         t = self._selected()
         if not t:
             return
 
-        def _done(res: str | None) -> None:
-            if res is not None:
-                self.apply_due(t, res)
-        self.push_screen(DueScreen(t.due), _done)
+        def save(due: dt.date | None, scheduled: dt.date | None, recurrence: str) -> None:
+            with self._task_record(t, "Change dates"):
+                tm.set_dates(self.vault, t, due, scheduled, recurrence=recurrence)
+
+        def done(saved: bool | None) -> None:
+            if saved:
+                self.refresh_tasks(keep_id=t.id)
+                self.announce("Dates and repeat saved" if t.recurrence else "Dates saved")
+
+        self.push_screen(DatesScreen(t.due, t.scheduled, recurrence=t.recurrence, start=t.start,
+                                    focus_repeat=focus_repeat, save=save), done)
 
     def action_priority(self) -> None:
         t = self._selected()
@@ -2954,7 +3144,7 @@ class TaskApp(NotesActions, App):
 
         def _done(res: str | None) -> None:
             if res is not None and res.isdigit():
-                with self._record("Change priority", [t.file]):
+                with self._task_record(t, "Change priority"):
                     tm.set_priority(self.vault, t, int(res))
                 self.refresh_tasks(keep_id=t.id)
                 self.announce(f"Priority: {t.priority_name}")
@@ -2971,7 +3161,7 @@ class TaskApp(NotesActions, App):
 
         def _done(ok: bool | None) -> None:
             if ok:
-                with self._record("Delete task", [t.file]):
+                with self._task_record(t, "Delete task"):
                     n = tm.delete_task(self.vault, t)
                 self.refresh_tasks(select=self.query_one(TaskList).cursor)
                 extra = f" ({n} lines)" if n > 1 else ""

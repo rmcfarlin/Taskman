@@ -54,14 +54,16 @@ def test_invalid_anchor_comments_remain_literal_text(invalid):
     assert comment in tm.build_line(task)
 
 
-def test_unanchored_reads_and_creation_never_generate_ids(tmp_path):
+def test_legacy_reads_do_not_migrate_and_new_tasks_get_ids(tmp_path):
     path = _file(tmp_path, "# Inbox\n\n- [ ] Existing #work\n")
     before = path.read_bytes()
     assert _only(tmp_path).anchor == ""
     assert path.read_bytes() == before
     added = tm.add_task(tmp_path, "New task")
-    assert added.anchor == ""
-    assert "taskman:id" not in path.read_text(encoding="utf-8")
+    assert re.fullmatch(r"[0-9a-f]{32}", added.anchor)
+    assert path.read_bytes().startswith(before)
+    assert tm.load_all(tmp_path)[0].anchor == ""
+    assert path.read_text(encoding="utf-8").count("taskman:id") == 1
 
 
 @pytest.mark.parametrize("ending", ["\n", "\r\n", ""])
@@ -85,7 +87,7 @@ def test_lazy_anchor_preserves_original_bytes_and_returns_fresh_task(tmp_path, e
 
 def test_anchor_created_after_add_can_be_resolved_immediately(tmp_path):
     task = tm.add_task(tmp_path, "Converted from a note #work")
-    assert task.raw == "" and task.anchor == ""
+    assert task.raw and task.anchor
     anchored = tm.ensure_task_anchor(tmp_path, task)
     found = tm.find_task_by_anchor(tm.load_all(tmp_path), anchored.anchor)
     assert found.id == task.id and found.description == "Converted from a note"

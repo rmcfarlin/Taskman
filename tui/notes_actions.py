@@ -19,26 +19,25 @@ class NotesActions:
     """Application actions; the task list never supplies a target in Notes."""
 
     def _save_with_task_change(self, paths, change, save):
+        with tm.vault_write_lock(self.vault):
+            return self._save_with_task_change_locked(paths, change, save)
+
+    def _save_with_task_change_locked(self, paths, change, save):
         """Roll back our task writes if the note cannot be saved.
 
         Only task files enter the rollback journal. A concurrent external note
         edit must never be mistaken for our own write and restored over.
         """
         rollback = History(self.vault)
-        error = None
-        result = None
         with rollback.record("Prepare linked task", paths):
-            try:
-                result = change()
-            except (OSError, ValueError, NoteConflict) as exc:
-                error = exc
-        if error is None:
-            try:
-                return save(result)
-            except (OSError, ValueError, NoteConflict) as exc:
-                error = exc
-        rollback.undo()
-        raise error
+            # A rejected atomic task change may have observed an external edit.
+            # Let it escape the journal: that external content is not our write.
+            result = change()
+        try:
+            return save(result)
+        except (OSError, ValueError, NoteConflict):
+            rollback.undo()
+            raise
 
     def _sync_notes_mode(self) -> None:
         notes = self.view == "notes"
@@ -128,8 +127,9 @@ class NotesActions:
             nonlocal saved
             try:
                 path = note.file if note else self.notes_store.new_path(draft.title)
-                paths = [path] + ([task.file] if task else [])
-                with self._record("Edit reference note" if note else "Create reference note", paths):
+                label = "Edit reference note" if note else "Create reference note"
+                record = self._task_record(task, label, [path]) if task else self._record(label, [path])
+                with record:
                     def write(anchored=None):
                         links = note.tasks if note else ()
                         if anchored:
@@ -185,7 +185,7 @@ class NotesActions:
         if task.anchor and any(link.id == task.anchor for link in note.tasks):
             self.announce("This note is already linked to the task")
             return
-        with self._record("Link reference note", [note.file, task.file]):
+        with self._task_record(task, "Link reference note", [note.file]):
             self._save_with_task_change([task.file], lambda: tm.ensure_task_anchor(self.vault, task),
                 lambda anchored: self.notes_store.save(replace(note, tasks=note.tasks + (
                     TaskLink(anchored.anchor, anchored.description),))))
@@ -298,8 +298,7 @@ class NotesActions:
             path = f"Projects/{project}.md" if project else "Tasks/Inbox.md"
             with self._record("Create task from note", [path, note.file]):
                 def create():
-                    task = tm.add_task(self.vault, result["text"], project=project)
-                    return tm.ensure_task_anchor(self.vault, task)
+                    return tm.add_task(self.vault, result["text"], project=project)
                 self._save_with_task_change([path], create, lambda task: self.notes_store.save(
                     replace(note, tasks=note.tasks + (TaskLink(task.anchor, task.description),))))
             self.refresh_tasks()

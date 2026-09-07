@@ -42,11 +42,12 @@ def test_mouse_focus_keeps_rows_fixed_and_clicks_exact_view_or_project(sidebar_v
     async def go():
         app = appmod.TaskApp(sidebar_vault, theme=theme)
         async with app.run_test(size=(144, 42)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             sidebar = app.query_one(appmod.Sidebar)
             tasks = app.query_one(appmod.TaskList)
             original_region = sidebar.scrollable_content_region
-            today = _option_offset(app, sidebar, "view:today")
+            today = _option_offset(app, sidebar, "view:now")
             assert tasks.has_focus
 
             # MouseDown focuses before Click; it must not move a row under the pointer.
@@ -54,7 +55,7 @@ def test_mouse_focus_keeps_rows_fixed_and_clicks_exact_view_or_project(sidebar_v
             await pilot.pause()
             assert sidebar.has_focus
             assert sidebar.scrollable_content_region == original_region
-            assert _option_offset(app, sidebar, "view:today") == today
+            assert _option_offset(app, sidebar, "view:now") == today
             assert await pilot.mouse_up(sidebar, offset=today)
             await pilot.pause()
             assert sidebar.scrollable_content_region == original_region
@@ -62,7 +63,7 @@ def test_mouse_focus_keeps_rows_fixed_and_clicks_exact_view_or_project(sidebar_v
             await pilot.pause()
             assert tasks.has_focus
 
-            for option_id, view, project in (("view:today", "today", ""),
+            for option_id, view, project in (("view:now", "now", ""),
                                              ("proj:Alpha", "project", "Alpha")):
                 target = _option_offset(app, sidebar, option_id)
                 assert await pilot.click(sidebar, offset=target)
@@ -79,6 +80,7 @@ def test_hover_preserves_view_and_does_not_paint_a_second_selection(sidebar_vaul
     async def go():
         app = appmod.TaskApp(sidebar_vault, theme=theme)
         async with app.run_test(size=(144, 42)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             sidebar = app.query_one(appmod.Sidebar)
             for focused in (False, True):
@@ -87,7 +89,7 @@ def test_hover_preserves_view_and_does_not_paint_a_second_selection(sidebar_vaul
                     await pilot.pause()
                 assert sidebar.has_focus == focused
                 active = _option_offset(app, sidebar, "view:all")
-                target = _option_offset(app, sidebar, "view:today")
+                target = _option_offset(app, sidebar, "view:now")
                 active_background = _background(app, sidebar, active)
                 target_background = _background(app, sidebar, target)
                 assert active_background != target_background
@@ -108,24 +110,25 @@ def test_clicking_headings_and_separator_does_not_navigate(sidebar_vault):
     async def go():
         app = appmod.TaskApp(sidebar_vault, theme="taskman-dark-teal")
         async with app.run_test(size=(144, 42)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             sidebar = app.query_one(appmod.Sidebar)
-            await pilot.click(sidebar, offset=_option_offset(app, sidebar, "view:today"))
+            await pilot.click(sidebar, offset=_option_offset(app, sidebar, "view:now"))
             await pilot.pause()
-            assert app.view == "today"
+            assert app.view == "now"
             for heading in ("h:views", "h:projects"):
                 assert await pilot.click(sidebar, offset=_option_offset(app, sidebar, heading))
                 await pilot.pause()
-                assert (app.view, app.project) == ("today", "")
-                assert sidebar.highlighted_option.id == "view:today"
+                assert (app.view, app.project) == ("now", "")
+                assert sidebar.highlighted_option.id == "view:now"
             x, y = _option_offset(app, sidebar, "h:projects")
             separator = (x, y - 1)
             assert "option" not in app.screen.get_style_at(
                 sidebar.region.x + x, sidebar.region.y + y - 1).meta
             assert await pilot.click(sidebar, offset=separator)
             await pilot.pause()
-            assert (app.view, app.project) == ("today", "")
-            assert sidebar.highlighted_option.id == "view:today"
+            assert (app.view, app.project) == ("now", "")
+            assert sidebar.highlighted_option.id == "view:now"
     asyncio.run(go())
 
 
@@ -133,23 +136,24 @@ def test_keyboard_browsing_and_focus_handoff_survive_mouse_navigation(sidebar_va
     async def go():
         app = appmod.TaskApp(sidebar_vault, theme="taskman-dark-teal")
         async with app.run_test(size=(144, 42)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             sidebar = app.query_one(appmod.Sidebar)
             tasks = app.query_one(appmod.TaskList)
-            await pilot.click(sidebar, offset=_option_offset(app, sidebar, "view:today"))
+            await pilot.click(sidebar, offset=_option_offset(app, sidebar, "view:now"))
             await pilot.pause()
             await pilot.press("alt+1")
             await pilot.pause()
-            assert sidebar.has_focus and app.view == "today"
+            assert sidebar.has_focus and app.view == "now"
             await pilot.press("up")
             await pilot.pause()
             assert sidebar.has_focus and app.view == "all"
             await pilot.press("down")
             await pilot.pause()
-            assert sidebar.has_focus and app.view == "today"
+            assert sidebar.has_focus and app.view == "now"
             await pilot.press("right")
             await pilot.pause()
-            assert tasks.has_focus and app.view == "today"
+            assert tasks.has_focus and app.view == "now"
             await pilot.press("alt+1", "down")
             await pilot.pause()
             assert sidebar.has_focus and app.view == "overdue"

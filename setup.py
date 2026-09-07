@@ -5,7 +5,7 @@ from setuptools.command.build_py import build_py
 RUNTIME_MODULES = {
     "__init__", "__main__", "app", "commands", "diagnostics", "history",
     "settings", "shortcut_bar", "taskman", "vault_screen", "vaults",
-    "notes", "notes_ui", "notes_actions",
+    "notes", "notes_ui", "notes_actions", "cli", "git_sync", "terminal", "recurrence",
 }
 
 

@@ -166,7 +166,8 @@ def test_add_subtask_nests_and_positions(tmp_path):
     kid = tm.add_subtask(root, _by_desc(tasks, "Kid one"), "New kid 🔽")
     assert kid.depth == 2 and kid.parent_lineno == _by_desc(tasks, "Kid one").lineno
     lines = (root / "Tasks" / "Inbox.md").read_text(encoding="utf-8").splitlines()
-    assert lines[kid.lineno - 1] == "    - [ ] New kid 🔽"
+    assert kid.anchor
+    assert tm.TASK_ANCHOR_RE.sub("", lines[kid.lineno - 1]).rstrip() == "    - [ ] New kid 🔽"
     # Inserted directly after Kid one (which had no children yet).
     assert lines[kid.lineno - 2] == "  - [ ] Kid one"
 
@@ -314,14 +315,16 @@ def test_add_task_joins_project_task_list(tmp_path):
         "# Alpha\n\n## Tasks\n\n- [ ] First\n\n## Notes\n\nprose\n", encoding="utf-8")
     t = tm.add_task(root, "Second", project="Alpha")
     lines = (root / "Projects" / "Alpha.md").read_text(encoding="utf-8").splitlines()
-    assert lines[4] == "- [ ] First" and lines[5] == "- [ ] Second #project/Alpha"
+    assert t.anchor
+    assert lines[4] == "- [ ] First" and tm.TASK_ANCHOR_RE.sub("", lines[5]).rstrip() == "- [ ] Second #project/Alpha"
     assert lines[6] == "" and lines[7] == "## Notes"     # blank line before next heading kept
     assert t.lineno == 6
     # Empty section: a blank line is kept under the heading.
     (root / "Projects" / "Gamma.md").write_text("# Gamma\n\n## Tasks\n", encoding="utf-8")
-    tm.add_task(root, "Only", project="Gamma")
+    only = tm.add_task(root, "Only", project="Gamma")
+    assert only.anchor
     assert (root / "Projects" / "Gamma.md").read_text(encoding="utf-8") == (
-        "# Gamma\n\n## Tasks\n\n- [ ] Only #project/Gamma\n")
+        f"# Gamma\n\n## Tasks\n\n- [ ] Only #project/Gamma <!-- taskman:id={only.anchor} -->\n")
 
 
 def test_tree_rows_guides_and_order(tmp_path):
@@ -436,7 +439,8 @@ def test_notes_move_and_delete_with_their_task(tmp_path):
     # A new sub-task goes after the parent's whole block (notes + kids + their notes).
     kid3 = tm.add_subtask(root, _by_desc(tasks, "Parent"), "Kid three")
     lines = (root / "Tasks" / "N.md").read_text(encoding="utf-8").splitlines()
-    assert lines[kid3.lineno - 2] == "  - [ ] Kid two" and lines[kid3.lineno - 1] == "  - [ ] Kid three"
+    assert kid3.anchor
+    assert lines[kid3.lineno - 2] == "  - [ ] Kid two" and tm.TASK_ANCHOR_RE.sub("", lines[kid3.lineno - 1]).rstrip() == "  - [ ] Kid three"
     # Indenting Solo under Parent carries nothing extra; outdenting Kid one carries its note.
     tasks = tm.load_all(root)
     assert tm.outdent_task(root, _by_desc(tasks, "Kid one")) is not None

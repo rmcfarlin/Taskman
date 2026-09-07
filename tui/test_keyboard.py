@@ -38,6 +38,7 @@ def test_inspector_note_is_readable_without_a_mouse(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             tasks = app.query_one(appmod.TaskList)
             assert tasks.current.description == "Parent task"
@@ -66,6 +67,7 @@ def test_inspector_actions_target_the_focused_child(keyboard_vault, action):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.pause()
             await pilot.press("right", "tab")
             await pilot.pause()
@@ -105,6 +107,7 @@ def test_empty_task_text_stays_in_the_form(keyboard_vault, key, screen_type):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(90, 28)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press(key)
             await pilot.pause()
             await _type(pilot, "temporary text")
@@ -124,12 +127,13 @@ def test_invalid_due_date_preserves_input_and_allows_correction(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(90, 28)) as pilot:
-            await pilot.press("d")
+            await pilot.press("1")  # This workflow exercises the All open view.
+            await pilot.press("d", "ctrl+a")
             await _type(pilot, "notadate")
             await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, appmod.DueScreen)
-            field = app.screen.query_one("#text", appmod.Input)
+            field = app.screen.query_one("#due", appmod.Input)
             assert field.value == "notadate" and field.has_focus
             assert str(app.screen.query_one("#form-error").render()).strip()
             assert _task(keyboard_vault, "Parent task").due == dt.date.today()
@@ -151,6 +155,7 @@ def test_adding_from_search_reveals_the_created_task(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(90, 28)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("slash")
             await _type(pilot, "Separate")
             await pilot.press("enter")
@@ -172,6 +177,7 @@ def test_typing_shortcut_letters_in_a_modal_cannot_mutate_tasks(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(90, 28)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("a")
             await _type(pilot, "acsdpejnq123")
             await pilot.pause()
@@ -189,6 +195,7 @@ def test_delete_confirmation_defaults_to_keeping_the_branch(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(90, 28)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("delete")
             await pilot.pause()
             assert isinstance(app.screen, appmod.ConfirmScreen)
@@ -205,6 +212,7 @@ def test_compact_help_is_in_bounds_and_keyboard_scrollable(keyboard_vault, size)
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("f1")
             await pilot.pause()
             assert isinstance(app.screen, appmod.HelpScreen)
@@ -227,6 +235,7 @@ def test_compact_forms_keep_action_buttons_visible(keyboard_vault, key):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(60, 20)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press(key)
             await pilot.pause()
             dialog = app.screen.query_one("#dlg")
@@ -244,6 +253,7 @@ def test_narrow_inspector_receives_focus_and_returns_to_tasks(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(60, 20)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("i")
             await pilot.pause()
             inspector = app.query_one(appmod.Inspector)
@@ -264,6 +274,7 @@ def test_task_brackets_are_literal_in_dialogs(keyboard_vault, key):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(110, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press(key)
             await pilot.pause()
             if key == "delete":
@@ -283,6 +294,7 @@ def test_inspector_starts_at_the_top_when_a_different_task_is_selected(keyboard_
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("right", "end")
             await pilot.wait_for_scheduled_animations()
             inspector = app.query_one(appmod.Inspector)
@@ -303,6 +315,7 @@ def test_theme_preview_preserves_the_highlighted_child(keyboard_vault, monkeypat
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("right", "tab", "down")
             await pilot.pause()
             kids = app.query_one("#ins-kids", appmod.OptionList)
@@ -334,6 +347,7 @@ def test_read_child_details_keeps_child_target_after_theme_preview(keyboard_vaul
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
         async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("right", "tab", "down", "ctrl+k")
             await _type(pilot, "Read task details")
             await pilot.press("enter")

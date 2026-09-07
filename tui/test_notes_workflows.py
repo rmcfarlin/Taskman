@@ -88,6 +88,7 @@ async def test_link_from_task_open_backlinks_and_undo(vault):
     before = (vault / "Tasks/Inbox.md").read_bytes()
     app = TaskApp(vault)
     async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("1")
         target = app._selected()
         await pilot.press("l")
         await choose(pilot, "Reference manual")
@@ -199,6 +200,7 @@ async def test_inspector_reference_enter_opens_library(vault):
     note = NotesStore(vault).create("Reference", "Instructions")
     app = TaskApp(vault)
     async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("1")
         app._link_reference(note, app._selected())
         await pilot.press("i")
         links = app.query_one("#ins-references", OptionList)
@@ -215,7 +217,8 @@ async def test_failed_link_save_rolls_back_anchor_and_keeps_external_note(vault,
     note = NotesStore(vault).create("Reference", "Original")
     before = (vault / "Tasks/Inbox.md").read_bytes()
     app = TaskApp(vault)
-    async with app.run_test(size=(110, 34)):
+    async with app.run_test(size=(110, 34)) as pilot:
+        await pilot.press("1")
         def fail_save(changed):
             NotesStore(vault).save(replace(note, body="External change"))
             raise NoteConflict("External edit detected")
@@ -256,5 +259,28 @@ async def test_create_task_failure_does_not_leave_an_unlinked_task(vault, monkey
         monkeypatch.setattr(app.notes_store, "save", fail_save)
         await pilot.press("8", "ctrl+t", "enter")
         assert (vault / "Tasks/Inbox.md").read_bytes() == before
+        assert NotesStore(vault).load(note.file).tasks == ()
+        assert not app.history.can_undo
+
+
+@pytest.mark.asyncio
+async def test_rejected_link_never_rolls_back_external_task_edit(vault, monkeypatch):
+    note = NotesStore(vault).create("Reference", "Instructions")
+    path = vault / "Tasks/Inbox.md"
+    external = "# Inbox\n\n- [ ] External task update\n- [ ] Other task\n"
+    original_write = tm._write_lines_atomic
+    app = TaskApp(vault)
+    async with app.run_test(size=(110, 34)) as pilot:
+        await pilot.press("1")
+
+        def external_edit_before_compare(target, *args, **kwargs):
+            if target == path:
+                target.write_text(external, encoding="utf-8")
+            return original_write(target, *args, **kwargs)
+
+        monkeypatch.setattr(tm, "_write_lines_atomic", external_edit_before_compare)
+        with pytest.raises(ValueError, match="changed before saving"):
+            app._link_reference(note, app._selected())
+        assert path.read_text(encoding="utf-8") == external
         assert NotesStore(vault).load(note.file).tasks == ()
         assert not app.history.can_undo

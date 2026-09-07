@@ -53,7 +53,7 @@ async def _rendered_notifications(pilot, app):
     ("complete", "Done: Review [bold]literal[/bold]"),
     ("add", "Added: New [red]literal[/red] task"),
     ("edit", "Saved"),
-    ("due", "Due "),
+    ("due", "Dates saved"),
     ("status", "Status:"),
     ("priority", "Priority:"),
     ("project", "Created Projects/Fresh-Project.md and assigned the task"),
@@ -67,6 +67,7 @@ def test_task_mutations_render_real_notifications_and_restore_exact_files(
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         before = _files(runtime_vault)
         async with app.run_test(size=(110, 32), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             if operation == "complete":
                 await pilot.press("space")
             elif operation == "add":
@@ -118,6 +119,7 @@ def test_storage_error_renders_and_leaves_app_usable(runtime_vault, monkeypatch)
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         before = _files(runtime_vault)
         async with app.run_test(size=(100, 30), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("e", "ctrl+shift+a")
             await _type(pilot, "Attempted edit")
             await pilot.press("enter")
@@ -137,6 +139,7 @@ def test_external_edit_conflict_renders_warning_without_overwriting(runtime_vaul
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         path = runtime_vault / "Tasks/Inbox.md"
         async with app.run_test(size=(100, 30), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("space")
             await _rendered_notifications(pilot, app)
             if restore == "redo":
@@ -165,6 +168,7 @@ def test_open_dialog_survives_terminal_resize_and_clock_update(runtime_vault, ke
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         before = _files(runtime_vault)
         async with app.run_test(size=(130, 34), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press(key)
             assert isinstance(app.screen, screen_type)
             for width, height in [(80, 24), (60, 20), (130, 34)]:
@@ -187,6 +191,7 @@ def test_note_resize_keep_editing_discard_and_save_use_real_notifications(runtim
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         before = _files(runtime_vault)
         async with app.run_test(size=(110, 32), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             await pilot.press("n")
             await _type(pilot, " Unsaved addition.")
             editor = app.screen.query_one(TextArea)
@@ -225,6 +230,7 @@ def test_search_state_does_not_shadow_framework_query_and_focus(runtime_vault):
     async def go():
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         async with app.run_test(size=(100, 30), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             assert app.query("#tasks").first() is app.query_one(appmod.TaskList)
             await app.action_focus("tasks")
             await pilot.press("/")
@@ -242,6 +248,7 @@ def test_repeated_keyboard_dialog_cycles_keep_focus_and_unsaved_files(runtime_va
         app = appmod.TaskApp(runtime_vault, theme="taskman-teal")
         before = _files(runtime_vault)
         async with app.run_test(size=(110, 32), notifications=True) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
             # Fifty dialog open/close actions, while background notifications and
             # resize events exercise layout and focus restoration between screens.
             for index, key in enumerate(["ctrl+k", "f1", "a", "e", "d", "p", "s", "j", "n", "m"] * 2 + ["a", "e", "n", "f1", "ctrl+k"]):

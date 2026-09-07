@@ -63,6 +63,18 @@ def test_unknown_ui_arguments_do_not_silently_launch():
     assert "not installed" not in result.stderr
 
 
+@pytest.mark.parametrize("arguments", [
+    ("--due", "today"), ("--scheduled", "today"),
+    ("--under", "Tasks/Inbox.md:1"), ("--project", "Finance"),
+    ("--search", "term"), ("--id",),
+])
+def test_incomplete_cli_commands_do_not_open_the_ui(arguments):
+    result = cli(*arguments)
+    assert result.returncode == 2
+    assert "not installed" not in result.stderr
+    assert "Taskman:" in result.stderr
+
+
 def test_diagnostic_retains_error_without_capturing_locals_or_task_context(tmp_path):
     private_task_text = "customer task contents must not be captured"
     try:

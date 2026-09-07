@@ -44,10 +44,11 @@ import sys
 import tempfile
 import uuid
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable, Literal
 
+from . import recurrence as recurrence_rules
 from .vaults import (discover_vault, has_vault_marker, is_legacy_vault, is_linked,
                      normalize_folder, vault_path)
 
@@ -105,6 +106,10 @@ DATE_RES = (DUE_RE, START_RE, SCHED_RE, DONE_RE, CANCEL_RE)
 TAG_RE = re.compile(r"(?<![\w/])#([\w\-./]+)")
 TASK_ANCHOR_RE = re.compile(r"<!-- taskman:id=([0-9a-f]{32}) -->")
 TASK_ANCHOR_VALUE_RE = re.compile(r"[0-9a-f]{32}")
+RECURRENCE_NEXT_RE = re.compile(r"<!-- taskman:next=([0-9a-f]{32}) -->")
+RECURRENCE_RE = re.compile(
+    r"🔁\s*([^📅🛫⏳✅❌🔺⏫🔼🔽⏬]*?)(?=📅|🛫|⏳|✅|❌|🔺|⏫|🔼|🔽|⏬|(?<![\w/])#[\w\-./]+|<!--|$)"
+)
 
 # Folders never scanned (plugin code, history, templates with placeholder boxes).
 EXCLUDE_DIRS = {
@@ -119,12 +124,12 @@ EXCLUDE_DIRS = {
 SCAN_DIRS = ("Tasks", "Projects", "Notes", "Documentation")
 
 ViewName = Literal[
-    "inbox", "today", "overdue", "next7", "all", "completed", "priority", "project", "search"
+    "inbox", "now", "today", "overdue", "next7", "all", "completed", "priority", "project", "search"
 ]
 
 VIEWS: tuple[tuple[str, str], ...] = (
-    ("inbox", "Inbox  — no due date"),
-    ("today", "Today"),
+    ("inbox", "Inbox  — no due or scheduled date"),
+    ("now", "Now"),
     ("overdue", "Overdue"),
     ("next7", "Next 7 days"),
     ("all", "All open"),
@@ -161,7 +166,9 @@ class Task:
     note_end: int = 0         # lineno of the note's last line; 0 = no note lines
     context: bool = False     # transient: True when shown only as a matched
                               # task's ancestor (set by view_tasks, never saved)
-    anchor: str = ""          # durable identity, added only when explicitly linking
+    anchor: str = ""          # durable identity; new tasks get one, legacy tasks lazily
+    recurrence: str = ""      # supported or handwritten rule, without the 🔁 marker
+    recurrence_next: str = "" # successor anchor; preserved on reopen to avoid duplicates
 
     # -- derived ------------------------------------------------------------
     @property
@@ -237,6 +244,10 @@ class Task:
             parts.append(f"due {self.due.isoformat()}")
             if day and self.open and self.due < day:
                 parts.append("OVERDUE")
+        if self.scheduled:
+            parts.append(f"scheduled {self.scheduled.isoformat()}")
+        if self.recurrence:
+            parts.append(f"repeat {self.recurrence}")
         for t in self.tags:
             parts.append(f"#{t}")
         parts.append(f"({self.id})")
@@ -271,6 +282,17 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
     anchor = next(iter(anchors)) if len(anchors) == 1 else ""
     if anchor:
         body = TASK_ANCHOR_RE.sub(" ", body)
+    successors = set(RECURRENCE_NEXT_RE.findall(body))
+    recurrence_next = next(iter(successors)) if len(successors) == 1 else ""
+    if recurrence_next:
+        body = RECURRENCE_NEXT_RE.sub(" ", body)
+    repeats = list(RECURRENCE_RE.finditer(body))
+    recurrence = ""
+    if repeats:
+        # Keep unsupported rules as data so normal edits cannot silently lose them.
+        recurrence = " 🔁 ".join(match[1].strip() for match in repeats)
+        if recurrence:
+            body = RECURRENCE_RE.sub(" ", body)
     bullet = "-"  # normalized on write; original marker is not significant
     stripped = line.lstrip()
     if stripped[:2] in ("* ", "+ ") or (stripped and stripped[0].isdigit()):
@@ -296,6 +318,8 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
         bullet=bullet,
         raw=line.rstrip("\n"),
         anchor=anchor,
+        recurrence=recurrence,
+        recurrence_next=recurrence_next,
     )
     # Description = body minus priority emoji, date tokens, tags.
     desc = body
@@ -545,8 +569,53 @@ def today(date: "dt.date | None" = None) -> dt.date:
     return date or dt.date.today()
 
 
+def parse_date(raw: str, day: "dt.date | None" = None) -> "dt.date | None":
+    """Shared Due/Scheduled input language for the TUI and dependency-free CLI.
+
+    A named weekday means its next occurrence, including next week when it
+    names today. Empty text and clear/none/- remove the date.
+    """
+    value = raw.strip().casefold()
+    day = today(day)
+    if value in ("", "clear", "none", "-"):
+        return None
+    try:
+        if value in ("today", "tod"):
+            return day
+        if value in ("tomorrow", "tom"):
+            return day + dt.timedelta(days=1)
+        weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        for index, name in enumerate(weekdays):
+            if value in (name, name[:3]):
+                return day + dt.timedelta(days=(index - day.weekday()) % 7 or 7)
+        if re.fullmatch(r"\+[0-9]+", value):
+            return day + dt.timedelta(days=int(value[1:]))
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            return dt.date.fromisoformat(value)
+    except (ValueError, OverflowError):
+        pass
+    raise ValueError("Date not understood. Use today, tomorrow, mon, +7, YYYY-MM-DD, or clear.")
+
+
+def in_now(t: Task, day: dt.date) -> bool:
+    """Work needing attention: deadlines win over postponing scheduled work."""
+    return t.open and t.status != ">" and (
+        (t.due is not None and t.due <= day)
+        or (t.scheduled is not None and t.scheduled <= day)
+    )
+
+
+def now_date(t: Task, day: dt.date) -> tuple[str, "dt.date | None"]:
+    """Label and date explaining a Now match; fall back for context ancestors."""
+    if t.due is not None and t.due <= day:
+        return "due", t.due
+    if t.scheduled is not None and t.scheduled <= day:
+        return "scheduled", t.scheduled
+    return ("due", t.due) if t.due is not None else ("scheduled", t.scheduled)
+
+
 def is_inbox(t: Task) -> bool:
-    return t.open and t.due is None
+    return t.open and t.due is None and t.scheduled is None
 
 
 def view_tasks(tasks: Iterable[Task], view: str,
@@ -558,6 +627,7 @@ def view_tasks(tasks: Iterable[Task], view: str,
     a sub-task is never shown orphaned; they are flagged ``context=True``
     (dimmed in the TUI) to distinguish them from real matches.
     """
+    view = "now" if view == "today" else view
     task_list = list(tasks)
     for t in task_list:
         t.context = False
@@ -567,7 +637,7 @@ def view_tasks(tasks: Iterable[Task], view: str,
     for t in task_list:
         if view == "inbox" and not is_inbox(t):
             continue
-        elif view == "today" and not (t.open and t.due == day):
+        elif view == "now" and not in_now(t, day):
             continue
         elif view == "overdue" and not (t.open and t.due is not None and t.due < day):
             continue
@@ -587,7 +657,7 @@ def view_tasks(tasks: Iterable[Task], view: str,
             stems = project_stem_tags(t)
             if want not in tags and f"project/{want}" not in tags and want not in stems:
                 continue
-        elif view not in ("inbox", "today", "overdue", "next7", "all",
+        elif view not in ("inbox", "now", "overdue", "next7", "all",
                           "completed", "priority", "project", "search", "alltasks"):
             raise ValueError(f"unknown view: {view!r}")
         if q and q not in f"{t.description} {t.file} {' '.join(t.tags)}".casefold():
@@ -627,7 +697,8 @@ def counts(tasks: Iterable[Task], day: "dt.date | None" = None) -> dict[str, int
     kw = {"with_parents": False}  # counts are real matches, never context rows
     return {
         "inbox": len(view_tasks(ts, "inbox", day, **kw)),
-        "today": len(view_tasks(ts, "today", day, **kw)),
+        "now": len(view_tasks(ts, "now", day, **kw)),
+        "today": len(view_tasks(ts, "now", day, **kw)),  # legacy API alias
         "overdue": len(view_tasks(ts, "overdue", day, **kw)),
         "next7": len(view_tasks(ts, "next7", day, **kw)),
         "all": len(view_tasks(ts, "all", day, **kw)),
@@ -767,6 +838,14 @@ DONE_BUCKETS: tuple[tuple[str, str], ...] = (
     ("today", "Completed today"), ("yesterday", "Yesterday"),
     ("week", "Last 7 days"), ("older", "Older"), ("nodate", "No completion date"),
 )
+NOW_BUCKETS: tuple[tuple[str, str], ...] = (
+    ("overdue", "Overdue"), ("today", "Today"),
+)
+
+
+def now_bucket(t: Task, day: dt.date) -> int:
+    """Only missed deadlines are overdue; all other Now work belongs to Today."""
+    return 0 if t.due is not None and t.due < day else 1
 
 
 def due_bucket(t: Task, day: dt.date) -> int:
@@ -837,12 +916,17 @@ def tree_rows(rows: Iterable[Task]) -> list[list[Node]]:
     return trees
 
 
-def _tree_sort_key(nodes: list[Node], closed: bool) -> tuple:
+def _tree_sort_key(nodes: list[Node], closed: bool, now: bool = False) -> tuple:
     """Order trees inside a section: most urgent first (newest done first)."""
     real = [n.task for n in nodes if not n.task.context] or [nodes[0].task]
     if closed:
         newest = max((t.done_date or t.cancelled_date or dt.date.min) for t in real)
         return (-newest.toordinal(), real[0].file, real[0].lineno)
+    if now:
+        priority = max(t.priority for t in real)
+        earliest = min((date for t in real for date in (t.due, t.scheduled)
+                        if date is not None), default=dt.date.max)
+        return (-priority, earliest, real[0].file, real[0].lineno)
     due = min((t.due or dt.date.max) for t in real)
     prio = max(t.priority for t in real)
     return (due, -prio, real[0].file, real[0].lineno)
@@ -852,15 +936,17 @@ def sections(rows: Iterable[Task], view: str,
              day: "dt.date | None" = None) -> list[Section]:
     """Lay out view rows as titled sections of task trees.
 
-    Open views bucket by due date (Overdue … No date); the Completed view
+    Now buckets by missed deadline versus all other attention-worthy work.
+    Other open views bucket by due date (Overdue … No date); the Completed view
     buckets by completion date. A tree lands in the most urgent bucket of
     any *matched* task it contains, so a sub-task due today under an
     undated parent still shows under Today (parent dimmed as context).
     """
     day = today(day)
     closed = view == "completed"
-    buckets = DONE_BUCKETS if closed else DUE_BUCKETS
-    rank = done_bucket if closed else due_bucket
+    now = view in ("now", "today")
+    buckets = DONE_BUCKETS if closed else NOW_BUCKETS if now else DUE_BUCKETS
+    rank = done_bucket if closed else now_bucket if now else due_bucket
     grouped: dict[int, list[list[Node]]] = {}
     for tree in tree_rows(rows):
         real = [n.task for n in tree if not n.task.context] or [tree[0].task]
@@ -870,7 +956,7 @@ def sections(rows: Iterable[Task], view: str,
         trees = grouped.get(i)
         if not trees:
             continue
-        trees.sort(key=lambda ns: _tree_sort_key(ns, closed))
+        trees.sort(key=lambda ns: _tree_sort_key(ns, closed, now))
         out.append(Section(key, title, [n for ns in trees for n in ns]))
     return out
 
@@ -882,6 +968,8 @@ def sections(rows: Iterable[Task], view: str,
 def build_line(t: Task) -> str:
     """Rebuild the markdown line for a task (canonical, readable order)."""
     tokens: list[str] = []
+    if t.recurrence:
+        tokens.append(f"🔁 {t.recurrence}")
     if t.priority_emoji:
         tokens.append(t.priority_emoji)
     if t.start:
@@ -902,27 +990,108 @@ def build_line(t: Task) -> str:
             raise ValueError("Task anchor must be 32 lowercase hexadecimal characters")
         body = re.sub(r"\s+", " ", TASK_ANCHOR_RE.sub(" ", body)).strip()
         tokens.append(f"<!-- taskman:id={t.anchor} -->")
+    if t.recurrence_next:
+        if not TASK_ANCHOR_VALUE_RE.fullmatch(t.recurrence_next):
+            raise ValueError("Next occurrence anchor must be 32 lowercase hexadecimal characters")
+        body = re.sub(r"\s+", " ", RECURRENCE_NEXT_RE.sub(" ", body)).strip()
+        tokens.append(f"<!-- taskman:next={t.recurrence_next} -->")
     if tokens:
         body = f"{body} {' '.join(tokens)}" if body else " ".join(tokens)
     return f"{t.indent}{t.bullet} [{t.status}] {body}".rstrip()
 
 
+# Kept here so the mutation machinery has one clearly bounded home. The core
+# remains stdlib-only, including its cross-process writer coordination.
+from contextlib import contextmanager
+from threading import RLock, local
+import stat
+import time
+
+
+_WRITER_LOCKS: dict[str, RLock] = {}
+_WRITER_LOCKS_GUARD = RLock()
+_WRITER_STATE = local()
+_UNSET = object()
+
+
+@contextmanager
+def vault_write_lock(root: "str | Path"):
+    """Serialize Taskman writers, reentrantly, in this process and across CLI/TUI.
+
+    The OS releases the advisory lock if a process exits. External editors do
+    not take this lock: byte checks before atomic replacement detect observed
+    edits, but cannot prevent an external write in the final check/replace gap.
+    """
+    root = normalize_folder(root)
+    key = os.path.normcase(str(root))
+    with _WRITER_LOCKS_GUARD:
+        lock = _WRITER_LOCKS.setdefault(key, RLock())
+    with lock:
+        held = getattr(_WRITER_STATE, "held", set())
+        if key in held:
+            yield
+            return
+        path = vault_path(root, ".taskman/write.lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path = vault_path(root, ".taskman/write.lock")
+        with path.open("a+b") as stream:
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        stream.seek(0)
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as error:
+                    if time.monotonic() >= deadline:
+                        raise ValueError("Another Taskman writer is busy; try again") from error
+                    time.sleep(0.05)
+            _WRITER_STATE.held = held | {key}
+            try:
+                yield
+            finally:
+                _WRITER_STATE.held = held
+                if os.name == "nt":
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
 def _read_lines(path: Path) -> tuple[list[str], str]:
     """File lines + newline style (splitlines drops endings; we restore)."""
-    text = path.read_text(encoding="utf-8")
+    text = path.read_bytes().decode("utf-8")
     return text.splitlines(), ("\r\n" if "\r\n" in text else "\n")
 
 
 def _write_lines_atomic(path: Path, lines: list[str], nl: str,
-                         trailing_nl: bool = True) -> None:
-    """Replace a file's content via temp file + rename (crash-safe)."""
+                         trailing_nl: bool = True, *, expected=_UNSET) -> None:
+    """Stage, flush and replace; reject a changed file immediately before replace."""
     tmp = tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8",
                                       dir=str(path.parent), newline="")
     try:
         tmp.write(nl.join(lines) + (nl if trailing_nl and lines else ""))
+        tmp.flush()
+        os.fsync(tmp.fileno())
         tmp.close()
+        if path.exists():
+            os.chmod(tmp.name, stat.S_IMODE(path.stat().st_mode))
+        if expected is not _UNSET:
+            actual = path.read_bytes() if path.exists() else None
+            if actual != expected:
+                raise ValueError("Task file changed before saving; refresh and try again")
         os.replace(tmp.name, path)
     except BaseException:
+        # A write/flush/fsync error can leave the staging handle open. Windows
+        # cannot remove that file until it is closed; preserve the first error.
+        try:
+            tmp.close()
+        except OSError:
+            pass
         try:
             os.unlink(tmp.name)
         except OSError:
@@ -930,67 +1099,154 @@ def _write_lines_atomic(path: Path, lines: list[str], nl: str,
         raise
 
 
-def _rewrite_lines(root: Path, rel: str, changes: dict[int, str]) -> None:
-    """Replace several 1-based lines in one atomic write."""
-    path = vault_path(root, rel)
-    lines, nl = _read_lines(path)
+def _changed_lines(original: bytes, changes: dict[int, str]) -> str:
+    """Keep every unrelated byte, including mixed endings and missing final LF."""
+    lines = original.decode("utf-8").splitlines(keepends=True)
     for lineno, new_line in changes.items():
-        lines[lineno - 1] = new_line
-    _write_lines_atomic(path, lines, nl, trailing_nl=True)
+        if not 1 <= lineno <= len(lines):
+            raise ValueError("Task line changed before saving; refresh and try again")
+        old = lines[lineno - 1]
+        ending = old[len(old.rstrip("\r\n")):]
+        lines[lineno - 1] = new_line + ending
+    return "".join(lines)
+
+
+def _commit_text(root: Path, rel: str, original: "bytes | None", text: str) -> None:
+    path = vault_path(root, rel)
+    if original is not None and text.encode("utf-8") == original:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path = vault_path(root, rel)
+    _write_lines_atomic(path, [text], "", trailing_nl=False, expected=original)
+
+
+def _rewrite_lines(root: Path, rel: str, changes: dict[int, str]) -> None:
+    """Replace several 1-based lines together under the shared writer lock."""
+    with vault_write_lock(root):
+        original = vault_path(root, rel).read_bytes()
+        _commit_text(root, rel, original, _changed_lines(original, changes))
+
+
+def _check_anchors(task: Task) -> None:
+    if len(set(TASK_ANCHOR_RE.findall(task.raw or build_line(task)))) > 1:
+        raise ValueError("Task has conflicting anchors; repair them before editing")
+
+
+def resolve_task(root: "str | Path", identifier: str) -> Task:
+    """Find one stable 32-hex ID or legacy vault-relative ``file.md:line``.
+
+    Reads never add IDs. Unknown identifiers, unsafe paths and duplicate or
+    conflicting anchors raise ValueError, rather than selecting an arbitrary row.
+    """
+    root = normalize_folder(root)
+    if TASK_ANCHOR_VALUE_RE.fullmatch(identifier):
+        task = find_task_by_anchor(load_all(root), identifier)
+    else:
+        relative, sep, number = identifier.rpartition(":")
+        if not sep or not number.isascii() or not number.isdecimal() or int(number) < 1:
+            raise ValueError("Invalid task identifier; use a stable ID or file.md:line")
+        path = vault_path(root, relative)
+        if path.suffix.lower() != ".md":
+            raise ValueError("Task identifiers require a Markdown file")
+        relative = path.relative_to(root).as_posix()
+        tasks = load_all(root)
+        task = next((item for item in tasks
+                     if item.file == relative and item.lineno == int(number)), None)
+        if task and task.anchor:
+            find_task_by_anchor(tasks, task.anchor)
+    if task is None:
+        raise ValueError(f"Task not found: {identifier}")
+    _check_anchors(task)
+    return task
+
+
+def fresh_task(root: "str | Path", task: Task) -> Task:
+    """Resolve a task again and reject stale contents before a write/history record.
+
+    Stable IDs follow unchanged task lines across file moves and line insertions.
+    Legacy locations must still contain the exact line the caller originally read.
+    """
+    root = normalize_folder(root)
+    vault_path(root, task.file)  # Reject an unsafe supplied location even with an ID.
+    _check_anchors(task)
+    try:
+        current = resolve_task(root, task.anchor or task.id)
+    except ValueError as error:
+        if "not found" in str(error):
+            raise ValueError("Task changed or was removed; refresh and try again") from error
+        raise
+    expected = task.raw or build_line(task)
+    if current.raw != expected or current.note != task.note:
+        raise ValueError("Task changed before saving; refresh and try again")
+    # Detect an edit during the vault scan, not only changes since the dialog opened.
+    path = vault_path(root, current.file)
+    original = path.read_bytes()
+    parsed = parse_file(path, root)
+    check = next((item for item in parsed if item.lineno == current.lineno), None)
+    if (check is None or check.raw != current.raw or check.note != current.note
+            or path.read_bytes() != original):
+        raise ValueError("Task file changed before saving; refresh and try again")
+    return check
+
+
+def _task_snapshot(root: Path, task: Task) -> tuple[Task, list[Task], bytes]:
+    current = fresh_task(root, task)
+    path = vault_path(root, current.file)
+    original = path.read_bytes()
+    tasks = parse_file(path, root)
+    check = next((item for item in tasks if item.lineno == current.lineno), None)
+    if (check is None or check.raw != current.raw or check.note != current.note
+            or path.read_bytes() != original):
+        raise ValueError("Task file changed before saving; refresh and try again")
+    return check, tasks, original
+
+
+def _updated_task(root: Path, original: Task, current: Task) -> Task:
+    result = next((item for item in parse_file(vault_path(root, current.file), root)
+                   if item.lineno == current.lineno), None)
+    if result is None or (current.anchor and result.anchor != current.anchor):
+        raise ValueError("Task changed after saving; refresh and try again")
+    for field in Task.__dataclass_fields__:
+        setattr(original, field, getattr(result, field))
+    return original
+
+
+def _edit_task(root: "str | Path", task: Task, edit) -> Task:
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        current, _tasks, original = _task_snapshot(root, task)
+        edit(current)
+        _commit_text(root, current.file, original,
+                     _changed_lines(original, {current.lineno: build_line(current)}))
+        return _updated_task(root, task, current)
 
 
 def _rewrite_line(root: Path, t: Task, new_line: str) -> None:
     """Replace one 1-based line atomically (temp file + rename)."""
-    _rewrite_lines(root, t.file, {t.lineno: new_line})
+    with vault_write_lock(root):
+        current, _tasks, original = _task_snapshot(root, t)
+        _commit_text(root, current.file, original,
+                     _changed_lines(original, {current.lineno: new_line}))
+        _updated_task(root, t, current)
 
 
 def ensure_task_anchor(vault: Path, task: Task) -> Task:
     """Return a freshly parsed task with a durable anchor, adding one lazily.
 
-    The supplied location and raw line must still match the file. Newly added
-    tasks have no raw line, so their canonical line is checked instead. Stale
-    tasks and ambiguous anchors raise ValueError without writing. Existing
-    anchors are reused; ordinary reads and task creation never generate one.
+    Legacy tasks receive an ID only on explicit request or linking; new app
+    tasks already have one. Stale tasks and ambiguous anchors fail without writing.
     """
-    root = Path(vault)
-    path = vault_path(root, task.file)
-    original = path.read_bytes()
-    text = original.decode("utf-8")
-    lines = text.splitlines(keepends=True)
-    current = next((item for item in parse_file(path, root)
-                    if item.lineno == task.lineno), None)
-    expected_line = task.raw or build_line(task)
-    if (current is None or not 1 <= task.lineno <= len(lines)
-            or current.raw != expected_line
-            or lines[task.lineno - 1].rstrip("\r\n") != expected_line
-            or (task.anchor and task.anchor != current.anchor)):
-        raise ValueError("Task changed before linking; refresh and try again")
-    if len(set(TASK_ANCHOR_RE.findall(current.raw))) > 1:
-        raise ValueError("Task has conflicting anchors; repair them before linking")
-    tasks = load_all(root)
-    if current.anchor:
-        find_task_by_anchor(tasks, current.anchor)  # Reject ambiguous copied IDs.
-        if path.read_bytes() != original:
-            raise ValueError("Task file changed before linking; refresh and try again")
-        return current
-    used = {item.anchor for item in tasks if item.anchor}
-    anchor = uuid.uuid4().hex
-    while anchor in used:
-        anchor = uuid.uuid4().hex
-    raw = lines[task.lineno - 1]
-    body = raw.rstrip("\r\n")
-    ending = raw[len(body):]
-    separator = "" if body and body[-1].isspace() else " "
-    lines[task.lineno - 1] = f"{body}{separator}<!-- taskman:id={anchor} -->{ending}"
-    if path.read_bytes() != original:
-        raise ValueError("Task file changed before linking; refresh and try again")
-    # Use the existing atomic replacement while preserving every original line
-    # ending, trailing newline, bullet, space, and unrelated byte in the file.
-    _write_lines_atomic(path, ["".join(lines)], "", trailing_nl=False)
-    result = find_task_by_anchor(parse_file(path, root), anchor)
-    if result is None or result.lineno != task.lineno:
-        raise ValueError("Task changed after linking; refresh and try again")
-    return result
+    root = normalize_folder(vault)
+    with vault_write_lock(root):
+        current, _tasks, original = _task_snapshot(root, task)
+        if current.anchor:
+            return current
+        anchor = _new_anchor(root, current)
+        separator = "" if current.raw and current.raw[-1].isspace() else " "
+        line = f"{current.raw}{separator}<!-- taskman:id={anchor} -->"
+        _commit_text(root, current.file, original,
+                     _changed_lines(original, {current.lineno: line}))
+        return resolve_task(root, anchor)
 
 
 def toggle(root: "str | Path", t: Task, day: "dt.date | None" = None,
@@ -1001,11 +1257,85 @@ def toggle(root: "str | Path", t: Task, day: "dt.date | None" = None,
     parent completes its open sub-tasks, reopening reopens done sub-tasks.
     One atomic write covers the subtree.
     """
-    root = Path(root)
-    fresh = parse_file(root / t.file, root)
-    cur = next((x for x in fresh if x.lineno == t.lineno), t)
-    targets = [cur] + (descendants_of(fresh, cur) if cascade else [])
-    new_done = not cur.done
+    return _completion(root, t, day, cascade, toggle=True)
+
+
+def complete(root: "str | Path", t: Task, day: "dt.date | None" = None,
+             cascade: bool = True) -> Task:
+    """Complete once; retries never reopen a task or change its completion date."""
+    return _completion(root, t, day, cascade, toggle=False)
+
+
+def normalize_recurrence(rule: str) -> str:
+    """Normalize supported repeat text; blank, none and clear remove the rule."""
+    return recurrence_rules.normalize_rule(rule)
+
+
+def _recurrence_dates(task: Task, day: "dt.date | None" = None) -> dict:
+    rule = recurrence_rules.parse_rule(task.recurrence)
+    reference = task.due or task.scheduled or task.start
+    if reference is None:
+        raise ValueError("Repeat needs a Due, Scheduled, or Start date")
+    following = recurrence_rules.next_date(rule, reference, today(day))
+    delta = following - reference
+    try:
+        return {field: value + delta if value else None for field in ("due", "scheduled", "start")
+                for value in (getattr(task, field),)}
+    except (OverflowError, ValueError):
+        raise ValueError("Next occurrence is outside the supported calendar") from None
+
+
+def recurrence_warning(task: Task, day: "dt.date | None" = None) -> str:
+    """Explain why a handwritten repeat cannot spawn, including after completion."""
+    if not task.recurrence or task.recurrence_next:
+        return ""
+    if len(set(RECURRENCE_NEXT_RE.findall(task.raw))) > 1:
+        return "Conflicting next occurrence markers; no next occurrence created"
+    try:
+        _recurrence_dates(task, day if day is not None else task.done_date)
+    except ValueError as error:
+        return f"{error}; no next occurrence created"
+    return ""
+
+
+def _completion(root: "str | Path", t: Task, day: "dt.date | None",
+                cascade: bool, *, toggle: bool) -> Task:
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        cur, tasks, original = _task_snapshot(root, t)
+        if cur.done and not toggle:
+            return _updated_task(root, t, cur)
+        targets = [cur] + (descendants_of(tasks, cur) if cascade else [])
+        new_done = not cur.done
+        successor = None
+        if new_done and cur.recurrence and not cur.recurrence_next and not recurrence_warning(cur, day):
+            successor = replace(cur, status=" ", done_date=None, cancelled_date=None,
+                                anchor="", raw="", recurrence_next="", context=False,
+                                **_recurrence_dates(cur, day))
+            successor.anchor = _new_anchor(root, successor)
+            cur.recurrence_next = successor.anchor
+        changes = _completion_lines(targets, cur, new_done, day)
+        if changes:
+            content = _changed_lines(original, changes)
+            if successor:
+                # Only the selected task and its own note are cloned. Keep every
+                # descendant under the completed original, with the same IDs.
+                chunks = original.decode("utf-8").splitlines(keepends=True)
+                newline = "\r\n" if b"\r\n" in original else "\n"
+                note = "".join(chunks[cur.lineno:cur.block_end])
+                insertion = build_line(successor) + newline + note
+                if not insertion.endswith(("\n", "\r")):
+                    insertion += newline
+                updated = content.splitlines(keepends=True)
+                updated.insert(cur.lineno - 1, insertion)
+                content = "".join(updated)
+                cur.lineno += len(insertion.splitlines())
+            _commit_text(root, cur.file, original, content)
+        return _updated_task(root, t, cur)
+
+
+def _completion_lines(targets: list[Task], cur: Task, new_done: bool,
+                      day: "dt.date | None") -> dict[int, str]:
     changes: dict[int, str] = {}
     for x in targets:
         # The task itself always flips; sub-tasks only if they need to
@@ -1019,10 +1349,7 @@ def toggle(root: "str | Path", t: Task, day: "dt.date | None" = None,
             x.status = " "
             x.done_date = None
             changes[x.lineno] = build_line(x)
-    if changes:
-        _rewrite_lines(root, t.file, changes)
-    t.status, t.done_date = cur.status, cur.done_date
-    return t
+    return changes
 
 
 def set_status(root: "str | Path", t: Task, status: str,
@@ -1033,40 +1360,75 @@ def set_status(root: "str | Path", t: Task, status: str,
     leaving either state clears its date. Other statuses ('/', '>', '?')
     touch nothing else. For the whole-branch behaviour use ``toggle``.
     """
-    t.status = status or " "
-    if t.done:
-        t.done_date = t.done_date or today(day)
-        t.cancelled_date = None
-    elif t.cancelled:
-        t.cancelled_date = t.cancelled_date or today(day)
-        t.done_date = None
-    else:
-        t.done_date = None
-        t.cancelled_date = None
-    _rewrite_line(Path(root), t, build_line(t))
-    return t
+    status = status or " "
+    if len(status) != 1 or status in "\r\n]":
+        raise ValueError("Status must be one checkbox character")
+    if status.lower() == "x":
+        return complete(root, t, day, cascade=False)
+
+    def edit(cur: Task) -> None:
+        cur.status = status
+        cur.done_date = None
+        cur.cancelled_date = (cur.cancelled_date or today(day)) if cur.cancelled else None
+
+    return _edit_task(root, t, edit)
 
 
 def set_due(root: "str | Path", t: Task, due: "dt.date | None") -> Task:
-    t.due = due
-    _rewrite_line(Path(root), t, build_line(t))
-    return t
+    return _set_dates(root, t, due=due)
+
+
+def _valid_date(value: "dt.date | None") -> "dt.date | None":
+    if value is not None and (not isinstance(value, dt.date) or isinstance(value, dt.datetime)):
+        raise ValueError("Dates must be a calendar date or None")
+    return value
+
+
+def set_scheduled(root: "str | Path", t: Task, scheduled: "dt.date | None") -> Task:
+    return _set_dates(root, t, scheduled=scheduled)
+
+
+def set_dates(root: "str | Path", t: Task, due: "dt.date | None",
+              scheduled: "dt.date | None", *, recurrence=_UNSET) -> Task:
+    """Validate and save dates and optional repeat rule in one replacement."""
+    return _set_dates(root, t, due=due, scheduled=scheduled, recurrence=recurrence)
+
+
+def _set_dates(root, t, *, due=_UNSET, scheduled=_UNSET, recurrence=_UNSET) -> Task:
+    if due is not _UNSET:
+        due = _valid_date(due)
+    if scheduled is not _UNSET:
+        scheduled = _valid_date(scheduled)
+    def edit(cur: Task) -> None:
+        if due is not _UNSET:
+            cur.due = due
+        if scheduled is not _UNSET:
+            cur.scheduled = scheduled
+        if recurrence is not _UNSET and recurrence != cur.recurrence:
+            cur.recurrence = normalize_recurrence(recurrence)
+        if cur.recurrence and not (cur.due or cur.scheduled or cur.start):
+            raise ValueError("Repeat needs a Due, Scheduled, or Start date")
+    return _edit_task(root, t, edit)
+
+
+def set_recurrence(root: "str | Path", t: Task, rule: str) -> Task:
+    return _set_dates(root, t, recurrence=rule)
 
 
 def set_priority(root: "str | Path", t: Task, level: int) -> Task:
     if not 0 <= level <= 5:
         raise ValueError("priority level must be 0..5")
-    t.priority = level
-    _rewrite_line(Path(root), t, build_line(t))
-    return t
+    return _edit_task(root, t, lambda cur: setattr(cur, "priority", level))
 
 
 def edit_text(root: "str | Path", t: Task, description: str) -> Task:
-    if t.anchor:
-        description = TASK_ANCHOR_RE.sub(" ", description)
-    t.description = re.sub(r"\s+", " ", description).strip()
-    _rewrite_line(Path(root), t, build_line(t))
-    return t
+    def edit(cur: Task) -> None:
+        if "🔁" in description and description != cur.description:
+            raise ValueError("Use Dates to change Repeat")
+        text = TASK_ANCHOR_RE.sub(" ", description) if cur.anchor else description
+        cur.description = re.sub(r"\s+", " ", text).strip()
+
+    return _edit_task(root, t, edit)
 
 
 def block_linenos(tasks: Iterable[Task], t: Task) -> set[int]:
@@ -1081,15 +1443,14 @@ def block_linenos(tasks: Iterable[Task], t: Task) -> set[int]:
 def delete_task(root: "str | Path", t: Task) -> int:
     """Delete a task *with its notes and sub-tasks* (whole branch).
     Returns the number of lines removed."""
-    root = Path(root)
-    fresh = parse_file(root / t.file, root)
-    cur = next((x for x in fresh if x.lineno == t.lineno), t)
-    victims = block_linenos(fresh, cur)
-    path = vault_path(root, t.file)
-    lines, nl = _read_lines(path)
-    kept = [ln for i, ln in enumerate(lines, start=1) if i not in victims]
-    _write_lines_atomic(path, kept, nl, trailing_nl=bool(kept))
-    return len(victims)
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        cur, tasks, original = _task_snapshot(root, t)
+        victims = block_linenos(tasks, cur)
+        lines = original.decode("utf-8").splitlines(keepends=True)
+        kept = [ln for i, ln in enumerate(lines, start=1) if i not in victims]
+        _commit_text(root, cur.file, original, "".join(kept))
+        return len(victims)
 
 
 def set_note(root: "str | Path", t: Task, text: str) -> Task:
@@ -1100,19 +1461,26 @@ def set_note(root: "str | Path", t: Task, text: str) -> Task:
     note are kept, leading/trailing blank lines dropped. Empty text removes
     the note. Sub-tasks stay where they are (after the note).
     """
-    root = Path(root)
-    path = vault_path(root, t.file)
-    fresh = parse_file(path, root)
-    cur = next((x for x in fresh if x.lineno == t.lineno), t)
+    root = normalize_folder(root)
     clean = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
     body = [ln.rstrip() for ln in clean.split("\n")] if clean.strip() else []
-    new_lines = [f"{cur.indent}{INDENT_STEP}{ln}" if ln.strip() else "" for ln in body]
-    lines, nl = _read_lines(path)
-    lines[cur.lineno:cur.block_end] = new_lines      # old note block -> new one
-    _write_lines_atomic(path, lines, nl, trailing_nl=True)
-    t.note = "\n".join(body)
-    t.note_end = cur.lineno + len(new_lines) if new_lines else 0
-    return t
+    with vault_write_lock(root):
+        cur, _tasks, original = _task_snapshot(root, t)
+        new_lines = [f"{cur.indent}{INDENT_STEP}{ln}" if ln.strip() else "" for ln in body]
+        text = _splice_lines(original, cur.lineno, cur.block_end, new_lines)
+        _commit_text(root, cur.file, original, text)
+        return _updated_task(root, t, cur)
+
+
+def _splice_lines(original: bytes, start: int, stop: int, inserted: list[str]) -> str:
+    """Splice whole lines while preserving the endings of untouched lines."""
+    text = original.decode("utf-8")
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines(keepends=True)
+    if inserted and start and not lines[start - 1].endswith(("\n", "\r")):
+        lines[start - 1] += newline
+    lines[start:stop] = [line + newline for line in inserted]
+    return "".join(lines)
 
 
 def _parse_inline(text: str) -> Task:
@@ -1141,16 +1509,17 @@ def clean_project_name(name: str) -> str:
 
 def ensure_project_file(root: "str | Path", project: str) -> tuple[Path, bool]:
     """Make sure ``Projects/<project>.md`` exists. Returns (path, created)."""
-    root = Path(root)
-    target = vault_path(root, f"Projects/{project}.md")
-    if target.exists():
-        return target, False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        f"---\ntype: project\nstatus: active\n---\n\n# {project}\n\n## Tasks\n\n",
-        encoding="utf-8",
-    )
-    return target, True
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        target = vault_path(root, f"Projects/{project}.md")
+        if target.exists():
+            return target, False
+        _commit_text(root, target.relative_to(root).as_posix(), None, _project_header(project))
+        return target, True
+
+
+def _project_header(project: str) -> str:
+    return f"---\ntype: project\nstatus: active\n---\n\n# {project}\n\n## Tasks\n\n"
 
 
 def set_project(root: "str | Path", t: Task, project: str) -> Task:
@@ -1159,135 +1528,152 @@ def set_project(root: "str | Path", t: Task, project: str) -> Task:
     its note (moving lines would orphan sub-tasks and lose context).
     """
     project = clean_project_name(project)
-    keep = [g for g in t.tags if not g.lower().startswith("project/")]
-    if project:
-        keep.append(f"project/{project}")
-    t.tags = tuple(keep)
-    _rewrite_line(Path(root), t, build_line(t))
-    return t
+    def edit(cur: Task) -> None:
+        keep = [g for g in cur.tags if not g.lower().startswith("project/")]
+        if project:
+            keep.append(f"project/{project}")
+        cur.tags = tuple(keep)
+
+    return _edit_task(root, t, edit)
+
+
+def _new_anchor(root: Path, probe: Task) -> str:
+    _check_anchors(probe)
+    tasks = load_all(root)
+    used = {anchor for task in tasks for anchor in TASK_ANCHOR_RE.findall(task.raw)}
+    if probe.anchor:
+        if probe.anchor in used:
+            raise ValueError(f"Duplicate task anchor: {probe.anchor}")
+        return probe.anchor
+    anchor = uuid.uuid4().hex
+    while anchor in used:
+        anchor = uuid.uuid4().hex
+    return anchor
 
 
 def add_task(root: "str | Path", text: str, project: str = "",
-             due: "dt.date | None" = None, priority: int = 0) -> Task:
+             due=_UNSET, priority: int = 0, scheduled=_UNSET, recurrence=_UNSET) -> Task:
     """Append a task. Project tasks go under that file's ``## Tasks`` section."""
-    root = Path(root)
+    root = normalize_folder(root)
     probe = _parse_inline(text)
     desc = probe.description or text.strip()
     tags = list(probe.tags)
     prio = priority or probe.priority
-    due = due or probe.due
-    extras = {"start": probe.start, "scheduled": probe.scheduled}
+    due = probe.due if due is _UNSET else _valid_date(due)
+    scheduled = probe.scheduled if scheduled is _UNSET else _valid_date(scheduled)
+    recurrence = normalize_recurrence(probe.recurrence if recurrence is _UNSET else recurrence)
+    if recurrence and not (due or scheduled or probe.start):
+        raise ValueError("Repeat needs a Due, Scheduled, or Start date")
+    if not 0 <= prio <= 5:
+        raise ValueError("priority level must be 0..5")
     project = clean_project_name(project) if project else ""
     if project and not any(g.casefold() == f"project/{project}".casefold() for g in tags):
         tags.append(f"project/{project}")
 
-    if project:
-        target, _created = ensure_project_file(root, project)
-    else:
-        target = vault_path(root, "Tasks/Inbox.md")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists():
-            target.write_text("---\ntype: inbox\n---\n\n# Inbox\n\n", encoding="utf-8")
-    lines, nl = _read_lines(target)
-    rel = target.relative_to(root).as_posix()
-
-    t = Task(file=rel, lineno=len(lines) + 1, status=" ", description=desc,
-             priority=prio, due=due, start=extras["start"],
-             scheduled=extras["scheduled"], tags=tuple(tags), anchor=probe.anchor)
-    line = build_line(t)
-
-    # Project notes: join the list under "## Tasks" (right after the last
-    # task there, before any trailing blank lines / the next heading).
-    idx = next((i for i, ln in enumerate(lines)
-                if ln.strip().casefold() == "## tasks"), None) if project else None
-    if idx is not None:
-        j = idx + 1
-        while j < len(lines) and (lines[j].strip() == "" or TASK_LINE_RE.match(lines[j])):
-            j += 1
-        while j > idx + 1 and lines[j - 1].strip() == "":
-            j -= 1
-        if j == idx + 1:            # empty section: blank line under heading
-            lines.insert(j, "")
-            j += 1
-        lines.insert(j, line)
-        t.lineno = j + 1
-    else:
-        if lines and lines[-1].strip() and not TASK_LINE_RE.match(lines[-1]):
-            lines.append("")        # keep prose and the checkbox list apart
-        lines.append(line)
-        t.lineno = len(lines)
-    _write_lines_atomic(target, lines, nl, trailing_nl=True)
-    return t
+    rel = f"Projects/{project}.md" if project else "Tasks/Inbox.md"
+    # Reject unsafe destinations before writer coordination creates metadata.
+    # Resolve again under the lock in case the filesystem changed meanwhile.
+    vault_path(root, rel)
+    with vault_write_lock(root):
+        anchor = _new_anchor(root, probe)
+        target = vault_path(root, rel)
+        original = target.read_bytes() if target.exists() else None
+        content = original if original is not None else (
+            _project_header(project) if project else "---\ntype: inbox\n---\n\n# Inbox\n\n"
+        ).encode("utf-8")
+        lines = content.decode("utf-8").splitlines()
+        t = Task(file=rel, lineno=len(lines) + 1, status=" ", description=desc,
+                 priority=prio, due=due, start=probe.start, scheduled=scheduled,
+                 tags=tuple(tags), anchor=anchor, recurrence=recurrence)
+        line = build_line(t)
+        # Place after complete task blocks, including notes and descendants.
+        idx = next((i for i, ln in enumerate(lines)
+                    if ln.strip().casefold() == "## tasks"), None) if project else None
+        inserted = [line]
+        if idx is not None:
+            j = idx + 1
+            while j < len(lines) and not lines[j].startswith("#"):
+                j += 1
+            while j > idx + 1 and not lines[j - 1].strip():
+                j -= 1
+            if j == idx + 1:
+                inserted.insert(0, "")
+        else:
+            j = len(lines)
+            if lines and lines[-1].strip() and not TASK_LINE_RE.match(lines[-1]):
+                inserted.insert(0, "")
+        _commit_text(root, rel, original, _splice_lines(content, j, j, inserted))
+        return resolve_task(root, anchor)
 
 
 def add_subtask(root: "str | Path", parent: Task, text: str,
-                due: "dt.date | None" = None, priority: int = 0) -> Task:
+                due=_UNSET, priority: int = 0, scheduled=_UNSET, recurrence=_UNSET) -> Task:
     """Insert a sub-task under ``parent`` (after its existing children).
 
     The new line copies the file's nesting style: it reuses the indent of
     ``parent``'s current children when there are any, else parent + two
     spaces. Markdown stays clean and Obsidian renders the nesting.
     """
-    root = Path(root)
-    fresh = parse_file(root / parent.file, root)
-    cur = next((x for x in fresh if x.lineno == parent.lineno), parent)
-    kids = [x for x in fresh if x.parent_lineno == cur.lineno]
-    indent = kids[0].indent if kids else cur.indent + INDENT_STEP
+    root = normalize_folder(root)
     probe = _parse_inline(text)
-    t = Task(
-        file=parent.file, lineno=0, status=" ",
-        description=probe.description or text.strip(),
-        priority=priority or probe.priority, due=due or probe.due,
-        start=probe.start, scheduled=probe.scheduled,
-        tags=tuple(probe.tags), indent=indent, depth=cur.depth + 1,
-        parent_lineno=cur.lineno,
-        anchor=probe.anchor,
-    )
-    path = vault_path(root, parent.file)
-    lines, nl = _read_lines(path)
-    # Insert after the last line of the parent's block (its note lines and
-    # every descendant's lines/notes), so notes stay glued to their task.
-    last = max(block_linenos(fresh, cur))
-    lines.insert(last, build_line(t))  # 0-based index == line after `last`
-    _write_lines_atomic(path, lines, nl, trailing_nl=True)
-    t.lineno = last + 1
-    return t
+    due = probe.due if due is _UNSET else _valid_date(due)
+    scheduled = probe.scheduled if scheduled is _UNSET else _valid_date(scheduled)
+    recurrence = normalize_recurrence(probe.recurrence if recurrence is _UNSET else recurrence)
+    if recurrence and not (due or scheduled or probe.start):
+        raise ValueError("Repeat needs a Due, Scheduled, or Start date")
+    priority = priority or probe.priority
+    if not 0 <= priority <= 5:
+        raise ValueError("priority level must be 0..5")
+    with vault_write_lock(root):
+        cur, tasks, original = _task_snapshot(root, parent)
+        kids = [x for x in tasks if x.parent_lineno == cur.lineno]
+        indent = kids[0].indent if kids else cur.indent + INDENT_STEP
+        anchor = _new_anchor(root, probe)
+        t = Task(
+            file=cur.file, lineno=0, status=" ",
+            description=probe.description or text.strip(), priority=priority, due=due,
+            start=probe.start, scheduled=scheduled, tags=tuple(probe.tags), indent=indent,
+            depth=cur.depth + 1, parent_lineno=cur.lineno, anchor=anchor, recurrence=recurrence,
+        )
+        last = max(block_linenos(tasks, cur))
+        _commit_text(root, cur.file, original, _splice_lines(original, last, last, [build_line(t)]))
+        return resolve_task(root, anchor)
 
 
 def _shift_subtree(root: Path, rel: str, cur: Task, new_indent: str) -> Task:
     """Move ``cur`` + descendants (and everyone's note lines) to
     ``new_indent``, keeping relative nesting."""
-    fresh = parse_file(root / rel, root)
-    node = next((x for x in fresh if x.lineno == cur.lineno), cur)
-    branch = [node] + descendants_of(fresh, node)
-    old = node.indent
-    lines, _nl = _read_lines(root / rel)
+    with vault_write_lock(root):
+        node, tasks, original = _task_snapshot(root, cur)
+        branch = [node] + descendants_of(tasks, node)
+        old = node.indent
+        lines = original.decode("utf-8").splitlines()
 
-    def reindent(prefix: str) -> "str | None":
-        if not old:
-            return new_indent + prefix
-        if prefix.startswith(old):
-            return new_indent + prefix[len(old):]
-        return None  # malformed nesting; leave untouched
+        def reindent(prefix: str) -> "str | None":
+            if not old:
+                return new_indent + prefix
+            if prefix.startswith(old):
+                return new_indent + prefix[len(old):]
+            return None  # malformed nesting; leave untouched
 
-    changes: dict[int, str] = {}
-    for x in branch:
-        shifted = new_indent if x.lineno == node.lineno else reindent(x.indent)
-        if shifted is None:
-            continue
-        x.indent = shifted
-        changes[x.lineno] = build_line(x)
-        for ln in range(x.lineno + 1, x.block_end + 1):     # note lines follow
-            raw = lines[ln - 1]
-            if not raw.strip():
+        changes: dict[int, str] = {}
+        for x in branch:
+            _check_anchors(x)
+            shifted = new_indent if x.lineno == node.lineno else reindent(x.indent)
+            if shifted is None:
                 continue
-            lead = raw[: len(raw) - len(raw.lstrip())]
-            new_lead = reindent(lead)
-            if new_lead is not None:
-                changes[ln] = new_lead + raw.lstrip()
-    _rewrite_lines(root, rel, changes)
-    cur.indent = new_indent
-    return cur
+            x.indent = shifted
+            changes[x.lineno] = build_line(x)
+            for ln in range(x.lineno + 1, x.block_end + 1):
+                raw = lines[ln - 1]
+                if not raw.strip():
+                    continue
+                lead = raw[:len(raw) - len(raw.lstrip())]
+                new_lead = reindent(lead)
+                if new_lead is not None:
+                    changes[ln] = new_lead + raw.lstrip()
+        _commit_text(root, node.file, original, _changed_lines(original, changes))
+        return _updated_task(root, cur, node)
 
 
 def indent_task(root: "str | Path", t: Task) -> "Task | None":
@@ -1296,15 +1682,13 @@ def indent_task(root: "str | Path", t: Task) -> "Task | None":
     Returns the updated task, or None when there is no previous sibling to
     nest under (e.g. first task in the file). Children move along with it.
     """
-    root = Path(root)
-    fresh = parse_file(root / t.file, root)
-    cur = next((x for x in fresh if x.lineno == t.lineno), None)
-    if cur is None:
-        return None
-    sibs = [x for x in fresh if x.lineno < cur.lineno and x.depth == cur.depth]
-    if not sibs:
-        return None
-    return _shift_subtree(root, t.file, cur, sibs[-1].indent + INDENT_STEP)
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        cur, tasks, _original = _task_snapshot(root, t)
+        sibs = [x for x in tasks if x.lineno < cur.lineno and x.depth == cur.depth]
+        if not sibs:
+            return None
+        return _shift_subtree(root, cur.file, t, sibs[-1].indent + INDENT_STEP)
 
 
 def outdent_task(root: "str | Path", t: Task) -> "Task | None":
@@ -1312,13 +1696,13 @@ def outdent_task(root: "str | Path", t: Task) -> "Task | None":
 
     Returns the updated task, or None when already top-level.
     """
-    root = Path(root)
-    fresh = parse_file(root / t.file, root)
-    cur = next((x for x in fresh if x.lineno == t.lineno), None)
-    if cur is None or cur.depth == 0:
-        return None
-    parent = next((x for x in fresh if x.lineno == cur.parent_lineno), None)
-    return _shift_subtree(root, t.file, cur, parent.indent if parent else "")
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        cur, tasks, _original = _task_snapshot(root, t)
+        if cur.depth == 0:
+            return None
+        parent = next((x for x in tasks if x.lineno == cur.parent_lineno), None)
+        return _shift_subtree(root, cur.file, t, parent.indent if parent else "")
 
 
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -1344,11 +1728,11 @@ def link_project(root: "str | Path", t: Task, project: str) -> "Task | None":
         project = project[len("project/"):]
     if not project:
         return None
-    if any(g.casefold() == f"project/{project}".casefold() for g in t.tags):
-        return None
-    t.tags = tuple(list(t.tags) + [f"project/{project}"])
-    _rewrite_line(Path(root), t, build_line(t))
-    return t
+    with vault_write_lock(root):
+        current = fresh_task(root, t)
+        if any(g.casefold() == f"project/{project}".casefold() for g in current.tags):
+            return None
+        return _edit_task(root, t, lambda cur: setattr(cur, "tags", (*cur.tags, f"project/{project}")))
 
 
 def link_note(root: "str | Path", t: Task, title: str) -> "Task | None":
@@ -1357,9 +1741,13 @@ def link_note(root: "str | Path", t: Task, title: str) -> "Task | None":
     Returns the updated task, or None when already linked (no write).
     """
     title = title.strip().strip("[]")
-    if not title or title.casefold() in (n.casefold() for n in note_links(t)):
+    if not title:
         return None
-    return edit_text(Path(root), t, f"{t.description} [[{title}]]".strip())
+    with vault_write_lock(root):
+        current = fresh_task(root, t)
+        if title.casefold() in (n.casefold() for n in note_links(current)):
+            return None
+        return edit_text(Path(root), t, f"{current.description} [[{title}]]".strip())
 
 
 # ---------------------------------------------------------------------------
@@ -1399,65 +1787,12 @@ def _utf8_stdout() -> None:
 
 
 def main(argv: "list[str] | None" = None) -> int:
-    ap = argparse.ArgumentParser(
-        prog="taskman",
-        description="Markdown-native task manager (vault stays human-readable).",
-    )
-    ap.add_argument("--vault", default=None, help="vault folder (or TASKMAN_VAULT, recent folder, current vault)")
-    ap.add_argument("--plain", metavar="VIEW",
-                    help="print one task per line: inbox,today,overdue,next7,"
-                         "all,completed,priority,search + 'projects'")
-    ap.add_argument("--project", default="",
-                    help="project filter for --plain (or target project for --add)")
-    ap.add_argument("--search", default="", help="search text for --plain")
-    ap.add_argument("--add", metavar="TEXT",
-                    help="quick-add TEXT to the inbox (or to --project NAME)")
-    ap.add_argument("--sub", metavar="TEXT", help="add TEXT as a sub-task (needs --under)")
-    ap.add_argument("--note", metavar="TEXT",
-                    help="set the note under a task (needs --under; '' clears)")
-    ap.add_argument("--under", metavar="ID", help="task id (file:line) for --sub / --note")
-    ap.add_argument("--check", action="store_true", help="vault health summary")
-    args = ap.parse_args(argv)
-    try:
-        root = vault_root(args.vault)
-    except (OSError, ValueError) as error:
-        print(str(error), file=sys.stderr)
-        return 2
-    _utf8_stdout()
-
-    if args.check:
-        tasks = load_all(root)
-        c = counts(tasks)
-        print(f"vault: {root}")
-        print(f"files: {len(iter_markdown_files(root))}  tasks: {len(tasks)}")
-        for name, _label in VIEWS:
-            print(f"{name}: {c[name]}")
-        return 0
-    if args.add:
-        t = add_task(root, args.add, project=args.project)
-        print(f"added {t.id}: {t.description}")
-        return 0
-    if args.sub or args.note is not None:
-        flag = "--sub" if args.sub else "--note"
-        if not args.under:
-            print(f"{flag} needs --under FILE:LINE", file=sys.stderr)
-            return 2
-        target = next((x for x in load_all(root) if x.id == args.under), None)
-        if target is None:
-            print(f"no task {args.under}", file=sys.stderr)
-            return 1
-        if args.sub:
-            t = add_subtask(root, target, args.sub)
-            print(f"added {t.id} under {target.id}: {t.description}")
-        else:
-            set_note(root, target, args.note)
-            print(f"note {'cleared' if not args.note.strip() else 'saved'} on {target.id}")
-        return 0
-    if args.plain:
-        view = "search" if args.plain == "search" else args.plain
-        return cmd_plain(root, view, args.project, args.search)
-    ap.print_help()
-    return 2
+    """Run the shared dependency-free command interface."""
+    if __package__:
+        from .cli import main as command_main
+    else:
+        from cli import main as command_main
+    return command_main(argv)
 
 
 if __name__ == "__main__":
