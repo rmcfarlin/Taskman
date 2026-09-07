@@ -171,7 +171,7 @@ async def test_notes_actions_do_not_mutate_hidden_task_selection(vault):
     before = (vault / "Tasks/Inbox.md").read_bytes()
     app = TaskApp(vault)
     async with app.run_test(size=(80, 28)) as pilot:
-        await pilot.press("8", "space", "x", "delete", "d", "p", "s", "right_square_bracket")
+        await pilot.press("8", "space", "x", "delete", "escape", "d", "p", "s", "right_square_bracket")
         assert app._selected() is None
         assert (vault / "Tasks/Inbox.md").read_bytes() == before
         await pilot.press("alt+3")
@@ -183,6 +183,8 @@ async def test_notes_actions_do_not_mutate_hidden_task_selection(vault):
 
 @pytest.mark.asyncio
 async def test_enter_opens_note_and_rescan_preserves_browsed_selection(vault):
+    from tui import settings
+    settings.write_note_sort("title")
     store = NotesStore(vault)
     store.create("First", "First body")
     second = store.create("Second", "Second body")

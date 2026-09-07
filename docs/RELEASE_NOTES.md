@@ -1,3 +1,14 @@
+# Taskman 3.1.0
+
+Notes now support deletion with undo, recent-first sorting, search within long notes, filename renaming with direct link updates, and reusable templates. Existing vaults need no migration.
+
+- **Del** deletes a note after confirmation, keeps linked tasks, and supports session undo/redo.
+- Notes default to **Recently modified**; **s** switches to title order and remembers the preference without moving the selection.
+- **Ctrl+F** searches within the rendered note with highlights, match counts, next/previous navigation, and scrolling. The library's **/** filter remains independent.
+- **F2** previews a filename rename with direct link updates across vault Markdown, including note templates. Labels and anchors are preserved. Ambiguous links and detected external changes stop the operation; one undo restores the filename and affected links together.
+- **Ctrl+Shift+N** captures a note from a template. A Meeting template is included; **Edit note template** in **Ctrl+K** customizes future notes. Custom Markdown templates live in `.taskman/templates/notes/` and support `{{date}}`.
+- Multi-file undo/redo now rechecks edits after staging and rolls back its own writes if applying a change fails.
+
 # Taskman 3.0.0
 
 Recurring tasks, scheduled work in Now, stable task IDs for automation, and reliable Windows keyboard pushing are now part of Taskman. Your vault stays plain Markdown, with no bulk migration required.

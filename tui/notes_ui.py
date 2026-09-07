@@ -14,11 +14,16 @@ from rich.text import Text
 from rich.table import Table
 from textual import events, on
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
+from textual.geometry import Region
 from textual.message import Message
 from textual.screen import ModalScreen
+from textual.style import Style
 from textual.suggester import SuggestFromList
+from textual.visual import Visual
 from textual.widgets import Button, Input, Label, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -80,8 +85,56 @@ class NotesPreview(VerticalScroll):
             self.parent.focus_list()
 
 
+class NoteFindInput(Input):
+    """Find keys stay local even when the application also binds Escape."""
+
+    BINDINGS = [
+        Binding("enter", "next_match", "Next match", show=False, priority=True),
+        Binding("shift+enter", "previous_match", "Previous match", show=False, priority=True),
+        Binding("escape", "close_find", "Close Find", show=False, priority=True),
+        Binding("ctrl+a", "select_all", "Select all", show=False),
+    ]
+
+    def action_next_match(self) -> None:
+        self.query_ancestor(NotesWorkspace).action_next_match()
+
+    def action_previous_match(self) -> None:
+        self.query_ancestor(NotesWorkspace).action_previous_match()
+
+    def action_close_find(self) -> None:
+        self.query_ancestor(NotesWorkspace).dismiss_find()
+
+
+def _literal_matches(text: str, query: str) -> list[tuple[int, int]]:
+    """Casefold while keeping offsets in the original Unicode text."""
+    if not query:
+        return []
+    folded: list[str] = []
+    offsets: list[int] = []
+    for index, character in enumerate(text):
+        value = character.casefold()
+        folded.append(value)
+        offsets.extend([index] * len(value))
+    haystack, needle = "".join(folded), query.casefold()
+    matches: list[tuple[int, int]] = []
+    cursor = 0
+    while (position := haystack.find(needle, cursor)) >= 0:
+        span = offsets[position], offsets[position + len(needle) - 1] + 1
+        if not matches or span != matches[-1]:
+            matches.append(span)
+        cursor = position + len(needle)
+    return matches
+
+
 class NotesWorkspace(Horizontal):
     """A note list and readable preview, with one selected note at a time."""
+
+    BINDINGS = [
+        Binding("ctrl+f", "find", "Find in note", show=False),
+        Binding("escape", "close_find", "Close Find", show=False),
+        Binding("enter", "next_match", "Next match", show=False),
+        Binding("shift+enter", "previous_match", "Previous match", show=False),
+    ]
 
     DEFAULT_CSS = """
     NotesWorkspace {
@@ -131,6 +184,30 @@ class NotesWorkspace(Horizontal):
         background: $background;
         background-tint: transparent;
     }
+    NotesWorkspace #notes-findbar {
+        display: none;
+        dock: top;
+        height: 1;
+        width: 1fr;
+        background: $background;
+    }
+    NotesWorkspace #notes-findbar Label { width: 5; height: 1; color: $text-muted; }
+    NotesWorkspace #notes-find {
+        width: 1fr; min-width: 3; height: 1; border: none; padding: 0;
+        background: $primary 15%; background-tint: transparent;
+    }
+    NotesWorkspace #notes-find:focus { border: none; background: $primary 25%; }
+    NotesWorkspace #notes-find-count {
+        width: auto; min-width: 4; max-width: 12; height: 1;
+        margin: 0 1; color: $text-muted;
+    }
+    NotesWorkspace #notes-findbar Button {
+        width: 3; min-width: 3; height: 1; min-height: 1;
+        margin: 0; padding: 0; border: none;
+        background: $background; color: $text-accent;
+    }
+    NotesWorkspace #notes-findbar Button:hover,
+    NotesWorkspace #notes-findbar Button:focus { background: $primary 25%; }
     NotesWorkspace #notes-preview-title {
         height: auto;
         margin-bottom: 1;
@@ -202,10 +279,26 @@ class NotesWorkspace(Horizontal):
         self._selected_file = ""
         self._task_labels: dict[str, str] = {}
         self._pending: tuple[list[Note], str] | None = None
+        self._library_query = ""
+        self._find_query = ""
+        self._find_open = False
+        self._find_return_to_list = False
+        self._find_blocks: list[tuple[Static, Content, int]] = []
+        self._find_matches: list[tuple[int, int]] = []
+        self._find_index = -1
+        self._preview_generation = 0
+        self._preview_loading = False
 
     def compose(self) -> ComposeResult:
         yield NotesList(id="notes-list")
         with NotesPreview(id="notes-preview", can_focus=True):
+            with Horizontal(id="notes-findbar"):
+                yield Label("Find")
+                yield NoteFindInput(placeholder="In this note", compact=True, id="notes-find")
+                yield Static("", id="notes-find-count")
+                yield Button("↑", id="notes-find-previous", tooltip="Previous match · Shift+Enter")
+                yield Button("↓", id="notes-find-next", tooltip="Next match · Enter")
+                yield Button("×", id="notes-find-close", tooltip="Close Find · Esc")
             yield Static("", id="notes-preview-title")
             yield Static("", id="notes-preview-meta")
             yield Markdown("", id="notes-preview-body")
@@ -224,10 +317,182 @@ class NotesWorkspace(Horizontal):
     def on_resize(self, event: events.Resize) -> None:
         self.set_class(event.size.width < 78, "-compact")
         self.set_class(event.size.height < 16, "-short")
+        if self._find_open:
+            self.call_after_refresh(self._scroll_to_match)
+
+    def on_show(self) -> None:
+        if self._find_open:
+            self.call_after_refresh(lambda: self._rebuild_find(preserve_index=True))
 
     @property
     def current(self) -> Note | None:
         return self._notes.get(self._selected_file)
+
+    @property
+    def find_open(self) -> bool:
+        return self._find_open
+
+    def set_library_query(self, query: str) -> None:
+        """Offer the library filter as the initial Find text, without editing it."""
+        self._library_query = query
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in {"close_find", "next_match", "previous_match"}:
+            return self._find_open
+        return True
+
+    def action_find(self) -> None:
+        if not self._find_open:
+            self._find_return_to_list = self.query_one(NotesList).has_focus
+            self._find_open = True
+            self.query_one("#notes-findbar").display = True
+            field = self.query_one("#notes-find", NoteFindInput)
+            with field.prevent(Input.Changed):
+                field.value = self._find_query or self._library_query
+            self._find_query = field.value
+            self._rebuild_find()
+        field = self.query_one("#notes-find", NoteFindInput)
+        field.focus(scroll_visible=False)
+        field.action_select_all()
+
+    def dismiss_find(self) -> bool:
+        """Close only in-note Find. Return whether there was anything to close."""
+        if not self._find_open:
+            return False
+        self._find_open = False
+        self._restore_find_blocks()
+        self.query_one("#notes-findbar").display = False
+        if self._find_return_to_list:
+            self.focus_list()
+        else:
+            self.query_one(NotesPreview).focus(scroll_visible=False)
+        return True
+
+    def action_close_find(self) -> None:
+        self.dismiss_find()
+
+    def action_next_match(self) -> None:
+        self._move_match(1)
+
+    def action_previous_match(self) -> None:
+        self._move_match(-1)
+
+    def _move_match(self, delta: int) -> None:
+        if self._find_open and self._find_matches:
+            self._find_index = (self._find_index + delta) % len(self._find_matches)
+            self._paint_find()
+
+    def _restore_find_blocks(self) -> None:
+        for widget, content, _ in self._find_blocks:
+            if widget.is_mounted:
+                widget.update(content, layout=False)
+        self._find_blocks = []
+
+    def _rebuild_find(self, *, preserve_index: bool = False) -> None:
+        previous_index = self._find_index if preserve_index else 0
+        self._restore_find_blocks()
+        self._find_matches = []
+        self._find_index = -1
+        if not self._find_open:
+            return
+        if self._preview_loading:
+            self._paint_find()
+            return
+        text: list[str] = []
+        offset = 0
+        if self.current is not None:
+            widgets = [self.query_one("#notes-preview-title", Static),
+                       *self.query_one("#notes-preview-body", Markdown).query(Static)]
+            for widget in widgets:
+                # Container blocks have no text of their own; table cells and
+                # code labels are included as the visible leaves of Markdown.
+                content = widget.visual
+                if not isinstance(content, Content) or not content.plain:
+                    continue
+                self._find_blocks.append((widget, content, offset))
+                text.append(content.plain)
+                offset += len(content.plain) + 1
+        self._find_matches = _literal_matches("\n".join(text), self._find_query)
+        self._find_index = min(max(previous_index, 0), len(self._find_matches) - 1)
+        self._paint_find()
+
+    def _paint_find(self) -> None:
+        total = len(self._find_matches)
+        count = f"{self._find_index + 1}/{total}" if total else ("0/0" if self._find_query else "—")
+        if self._preview_loading:
+            count = "…"
+        self.query_one("#notes-find-count", Static).update(count)
+        self.query_one("#notes-find-count").tooltip = "No matches" if self._find_query and not total else "Current / total matches"
+        for button_id in ("#notes-find-previous", "#notes-find-next"):
+            self.query_one(button_id, Button).disabled = not total
+        for widget, original, offset in self._find_blocks:
+            content = original
+            for index, (start, end) in enumerate(self._find_matches):
+                left, right = max(0, start - offset), min(len(original), end - offset)
+                if left < right:
+                    # Keep Markdown styles and links. The active match uses
+                    # inverse colors; the others use an unobtrusive underline.
+                    style = Style(reverse=index == self._find_index, underline=True, bold=True)
+                    style += Style.from_meta({"note_find_match": index})
+                    content = content.stylize(style, left, right)
+            widget.update(content, layout=False)
+        self.call_after_refresh(self._scroll_to_match)
+
+    def _scroll_to_match(self, *, settle: bool = True) -> None:
+        if not self._find_open or self._find_index < 0:
+            return
+        start, end = self._find_matches[self._find_index]
+        preview = self.query_one(NotesPreview)
+        for widget, original, offset in self._find_blocks:
+            if start >= offset + len(original) or end <= offset or not widget.is_mounted:
+                continue
+            # Inspect the actual rendered lines, so wrapping, wide Unicode,
+            # code padding and table cell widths all have the same coordinates
+            # as the text the user sees.
+            lines = Visual.to_strips(widget, widget.visual, widget.content_size.width,
+                                    None, widget.visual_style)
+            for row, line in enumerate(lines):
+                column = 0
+                for segment in line:
+                    if segment.style and segment.style.meta.get("note_find_match") == self._find_index:
+                        region = Region(widget.content_region.x + column,
+                                        widget.content_region.y + row, segment.cell_length, 1)
+                        # A code block may also need horizontal scrolling.
+                        parent = widget.parent
+                        while parent is not None and parent is not self:
+                            if isinstance(parent, VerticalScroll) or parent.is_scrollable:
+                                local = region.translate(-parent.scrollable_content_region.offset + parent.scroll_offset)
+                                movement = parent.scroll_to_region(local, animate=False, immediate=True,
+                                                                   center=parent is preview)
+                                region = region.translate(-movement)
+                            parent = parent.parent
+                        if settle:
+                            # Showing a vertical scrollbar can shrink a code
+                            # block after this layout; settle both axes once.
+                            self.call_after_refresh(lambda: self._scroll_to_match(settle=False))
+                        return
+                    column += segment.cell_length
+
+    @on(Input.Changed, "#notes-find")
+    def _find_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self._find_query = event.value
+        self._rebuild_find()
+
+    @on(Button.Pressed, "#notes-findbar Button")
+    def _find_button(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "notes-find-close":
+            self.dismiss_find()
+        else:
+            self._move_match(-1 if event.button.id == "notes-find-previous" else 1)
+            self.query_one("#notes-find", NoteFindInput).focus(scroll_visible=False)
+
+    async def _preview_updated(self, update: AwaitComplete, generation: int) -> None:
+        await update
+        if generation == self._preview_generation and self.is_mounted:
+            self._preview_loading = False
+            self.call_after_refresh(self._rebuild_find)
 
     def set_notes(
         self, notes: Iterable[Note], selected_file: str = "", *,
@@ -274,6 +539,8 @@ class NotesWorkspace(Horizontal):
         self.query_one("#notes-preview", NotesPreview).focus()
 
     def _show_preview(self) -> None:
+        self._restore_find_blocks()
+        self._preview_generation += 1
         note = self.current
         title = self.query_one("#notes-preview-title", Static)
         meta = self.query_one("#notes-preview-meta", Static)
@@ -282,7 +549,9 @@ class NotesWorkspace(Horizontal):
         title.display = meta.display = body.display = note is not None
         empty.display = note is None or not note.body.strip()
         if note is None:
+            self._preview_loading = False
             empty.update("No notes to show.\n\nPress a to capture a note, or clear Find and filters to see more.")
+            self._rebuild_find()
             return
         title.update(Text(note.title))
         details = Text(note.category or "Unfiled")
@@ -301,7 +570,12 @@ class NotesWorkspace(Horizontal):
         lines = preview.splitlines()
         if lines and lines[0].strip() == f"# {note.title}":
             preview = "\n".join(lines[1:]).lstrip("\n")
-        body.update(preview)
+        # Markdown parses asynchronously. Track the latest document without
+        # blocking selection/input messages or searching a previous note.
+        self._preview_loading = True
+        self._rebuild_find()
+        self.run_worker(self._preview_updated(body.update(preview), self._preview_generation),
+                        group="note-preview")
         if not note.body.strip():
             empty.update("This note is empty. Press Enter or e to add content.")
         self.query_one("#notes-preview", NotesPreview).scroll_home(animate=False)
@@ -414,11 +688,14 @@ class NoteEditorScreen(ModalScreen[NoteDraft | None]):
     def __init__(
         self, note: Note | None = None, *, categories: Iterable[str] = (),
         projects: Iterable[str] = (),
+        initial: NoteDraft | None = None,
         save_handler: Callable[[NoteDraft], str | None] | None = None,
     ) -> None:
         super().__init__()
+        if note is not None and initial is not None:
+            raise ValueError("An initial draft is only supported for a new note.")
         self.note = note
-        self._initial = NoteDraft(
+        self._initial = initial or NoteDraft(
             title=note.title if note else "",
             body=note.body if note else "",
             category=(note.category if note else "Unfiled") or "Unfiled",

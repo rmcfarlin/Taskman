@@ -1878,6 +1878,11 @@ class HelpScreen(ModalScreen[None]):
             ("Ctrl+N", "Capture a new reference note from anywhere"),
             ("a / e / Enter", "in Notes: new / edit / edit selected note"),
             ("/", "in Notes: search titles, full content, categories, tags, and projects"),
+            ("Ctrl+F", "Find within the note; Enter next, Shift+Enter previous, Esc close"),
+            ("s", "Switch recently modified / title order; remembers your choice"),
+            ("Del", "Delete the note with confirmation; u restores it, including task links"),
+            ("F2", "Rename the Markdown file and preview updates to links in the vault"),
+            ("Ctrl+Shift+N", "New note from a template; Ctrl+K also offers Edit note template"),
             ("c / t / j", "in Notes: filter category / tag / project; Esc clears filters"),
             ("l", "Link an existing note to a task, or a task to the selected note"),
             ("k", "Open the selected task's notes, or the selected note's tasks"),
@@ -2051,6 +2056,9 @@ class TaskApp(NotesActions, App):
         Binding("c", "complete_or_category", "Complete / category", show=False),
         Binding("8", "notes", "Notes", show=False),
         Binding("ctrl+n", "new_reference", "New note", show=False),
+        Binding("ctrl+shift+n", "new_reference_template", "From template", show=False),
+        Binding("ctrl+f", "find_in_note", "Find within note", show=False),
+        Binding("f2", "rename_reference", "Rename note file", show=False),
         Binding("ctrl+t", "task_from_reference", "Create task from note", show=False),
         Binding("l", "link_reference", "Link note", show=False),
         Binding("k", "linked_references", "Linked notes / tasks", show=False),
@@ -2102,6 +2110,7 @@ class TaskApp(NotesActions, App):
         self.note_category = self.note_tag = self.note_project = ""
         self._notes = []
         self._selected_note_file = ""
+        self.note_sort = settings.read_note_sort()
         self.history = History(self.vault)
         self._opening_vault = False
         self._pushing_vault = False
@@ -2134,7 +2143,14 @@ class TaskApp(NotesActions, App):
             return False
         if isinstance(self.screen, ModalScreen) and action in {
                 "new_reference", "task_from_reference", "notes", "link_reference", "linked_references",
+                "new_reference_template", "edit_note_template", "find_in_note", "rename_reference",
+                "delete_reference", "note_sort",
                 "push_vault"}:
+            return False
+        if action in {"find_in_note", "rename_reference", "delete_reference", "note_sort"}:
+            if self.view != "notes":
+                return False
+        if action in {"delete", "delete_reference", "rename_reference", "note_sort"} and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -2495,13 +2511,16 @@ class TaskApp(NotesActions, App):
         elif self.focused and self.focused.id == "ins-kids":
             hint = "SUBTASKS  ·  Space complete child  ·  e edit  ·  n note  ·  Esc back"
         elif self.focused and self.focused.id == "notes-preview":
-            hint = "READING  ·  ↑↓ / PgUp / PgDn scroll  ·  ← notes  ·  e edit  ·  k linked tasks"
+            hint = "READING  ·  ↑↓ / PgUp / PgDn scroll  ·  ← notes  ·  Ctrl+F within note  ·  e edit"
+        elif self.focused and self.focused.id == "notes-find":
+            hint = "WITHIN NOTE  ·  Enter next  ·  Shift+Enter previous  ·  Esc close"
         elif self.view == "notes":
             hint = "NOTES  ·  ↑↓ browse  ·  Enter edit  ·  Tab read  ·  Esc clear filters  ·  Ctrl+K actions"
         else:
             hint = "↑↓ move  ·  Enter inspect  ·  Tab panes  ·  Ctrl+K all actions"
         self.query_one("#contextbar", Label).update(hint)
         self.query_one(ShortcutBar).set_mode(
+            "notes-find" if self.focused and self.focused.id == "notes-find" else
             ("notes-search" if self.view == "notes" else "search") if isinstance(self.focused, SearchInput)
             else ("notes" if self.view == "notes" else "tasks"),
             can_undo=self.history.can_undo, can_redo=self.history.can_redo,
@@ -2512,13 +2531,14 @@ class TaskApp(NotesActions, App):
         self._context_hint()
 
     @contextmanager
-    def _record(self, label: str, paths: list[str]):
+    def _record(self, label: str, paths: list[str], *, extra_context: dict | None = None):
         """Record only files touched by this change; restore navigation on undo."""
         current = self.query_one(TaskList).current
         context = {"view": self.view, "project": self.project, "query": self.search_query,
                    "task_id": current.id if current else None, "note_file": self._selected_note_file,
                    "note_category": self.note_category, "note_tag": self.note_tag,
                    "note_project": self.note_project}
+        context.update(extra_context or {})
         with self.history.record(label, paths, context=context):
             yield
 
@@ -2546,6 +2566,8 @@ class TaskApp(NotesActions, App):
         self.project = context.get("project", self.project)
         self.search_query = context.get("query", "")
         self._selected_note_file = context.get("note_file", "")
+        if redo and context.get("renamed_note_to"):
+            self._selected_note_file = context["renamed_note_to"]
         self.note_category = context.get("note_category", "")
         self.note_tag = context.get("note_tag", "")
         self.note_project = context.get("note_project", "")
@@ -2916,6 +2938,8 @@ class TaskApp(NotesActions, App):
 
     def action_escape(self) -> None:
         """Esc: clear a search first; otherwise close the inspector."""
+        if self.view == "notes" and self.query_one(NotesWorkspace).dismiss_find():
+            return
         search = self.query_one("#search", Input)
         if self.query_one("#searchbar").display:
             search.value = ""          # triggers Changed -> refresh
@@ -2992,6 +3016,9 @@ class TaskApp(NotesActions, App):
             self.toggle_task(t)
 
     def action_status(self) -> None:
+        if self.view == "notes":
+            self.action_note_sort()
+            return
         t = self._selected()
         if not t:
             return
@@ -3151,6 +3178,9 @@ class TaskApp(NotesActions, App):
         self.push_screen(self.priority_picker(t), self._guard(_done))
 
     def action_delete(self) -> None:
+        if self.view == "notes":
+            self.action_delete_reference()
+            return
         t = self._selected()
         if not t:
             return

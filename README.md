@@ -6,7 +6,7 @@ A keyboard-first task and notes manager for folders of Markdown files. Open a fo
 
 ## Download and run
 
-**Windows:** download the `taskman-3.0.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.0.0), extract the entire archive, and run:
+**Windows:** download the `taskman-3.1.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.1.0), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-3.0.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-3.1.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -175,6 +175,11 @@ Press **8** to browse Markdown files in your vault's `Notes/` folder, including 
 | Key while browsing Notes | Action |
 | --- | --- |
 | / | Search titles, full note contents, categories, tags, and projects |
+| Ctrl+F | Find within the rendered note; Enter / Shift+Enter move between highlighted matches |
+| s | Switch recently modified / title order; remembers your choice and selected note |
+| Del | Delete the note with confirmation; **u** undoes and **Ctrl+Y** redoes |
+| F2 | Preview a filename rename and update direct links across the vault |
+| Ctrl+Shift+N | Capture a note from an editable template |
 | c / t / j | Filter by category / tag / project |
 | Esc | Clear search first, then clear category, tag, and project filters |
 | l | Link the selected note to an existing task |
@@ -183,6 +188,12 @@ Press **8** to browse Markdown files in your vault's `Notes/` folder, including 
 | Ctrl+K | Find commands, including **Unlink task from note** and **Show unreadable notes** when applicable |
 
 Notes can stand alone or support several tasks. Creating a task from a note keeps the original note and its contents. Deleting a linked task leaves the note available, with that task marked unavailable. Unlinking removes the relationship without deleting either item.
+
+Notes open in **Recently modified** order. **Ctrl+F** searches the reading pane independently of the library's **/** filter. **Esc** closes in-note Find before clearing library filters. Deleting a note keeps its linked tasks. Undo restores its file, content, and task relationships during the current session (up to 50 actions).
+
+**F2** renames the file in its current folder; editing the title alone leaves the filename unchanged. Preview lists affected Markdown files and link counts before you apply. Taskman updates local Markdown links, reference definitions, wiki links, and HTML links that resolve to this file, preserving labels and anchors. The scan covers the vault's Markdown, including task files, other notes, and note templates; it excludes hidden and technical folders except the note template directory. Ordinary filename mentions, code examples, and external URLs stay untouched. Ambiguous links, unreadable content, existing filenames, and detected external edits stop the rename. Case-only renames are not supported. The rename and link rewrites share one undo action.
+
+**Ctrl+Shift+N** starts a new note from a template. The included **Meeting** template has attendees, discussion, decisions, and actions. Use **Ctrl+K → Edit note template** to customize it for future notes. Custom templates are Markdown files in `.taskman/templates/notes/`; add more `.md` files there to make them available in the picker. A custom `Meeting.md` replaces the built-in version. `{{date}}` inserts today's ISO date on capture. Template edits support undo and never change notes already created from them.
 
 While browsing tasks, **l** links an existing reference note or creates a linked note, and **k** opens related notes. Linked notes also appear in the task's details pane. The existing **n** shortcut still edits the task's attached note.
 

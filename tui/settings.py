@@ -55,6 +55,19 @@ def read_theme() -> str:
     return theme if isinstance(theme, str) else ""
 
 
+def read_note_sort() -> str:
+    value = _read().get("note_sort", "modified")
+    return value if value in ("modified", "title") else "modified"
+
+
+def write_note_sort(value: str) -> None:
+    if value not in ("modified", "title"):
+        raise ValueError("Choose recently modified or title order.")
+    values = _read()
+    values["note_sort"] = value
+    _write(values)
+
+
 def write_theme(name: str) -> None:
     if not isinstance(name, str) or not name.strip():
         raise ValueError("Choose a theme name.")

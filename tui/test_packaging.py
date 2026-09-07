@@ -58,7 +58,8 @@ def test_runtime_build_includes_required_modules_and_excludes_tests():
                               for target in node.targets))
     runtime = ast.literal_eval(assignment.value)
     assert {"__init__", "__main__", "app", "vaults", "settings", "vault_screen",
-            "notes", "notes_ui", "notes_actions", "cli", "git_sync", "terminal", "recurrence"} <= runtime
+            "notes", "notes_ui", "notes_actions", "note_files", "note_templates", "notes_dialogs",
+            "cli", "git_sync", "terminal", "recurrence"} <= runtime
     assert all(not module.startswith("test_") for module in runtime)
     assert "visual_check" not in runtime and "check" not in runtime
     assert all((ROOT / "tui" / f"{module}.py").is_file() for module in runtime)

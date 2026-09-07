@@ -72,7 +72,11 @@ SEARCH_SHORTCUTS = (
 NOTES_SHORTCUTS = (
     Shortcut("a", "New note", "new_reference"),
     Shortcut("e", "Edit", "edit_reference"),
+    Shortcut("Del", "Delete", "delete_reference"),
+    Shortcut("F2", "Rename", "rename_reference"),
+    Shortcut("s", "Sort", "note_sort"),
     Shortcut("/", "Find", "focus_search"),
+    Shortcut("Ctrl+F", "Within note", "find_in_note"),
     Shortcut("c", "Category", "note_category"),
     Shortcut("t", "Tag", "note_tag"),
     Shortcut("j", "Project", "note_project"),
@@ -84,6 +88,13 @@ NOTES_SHORTCUTS = (
     Shortcut("Ctrl+Y", "Redo", "redo"),
     Shortcut("r", "Rescan", "refresh"),
     Shortcut("1", "Tasks", "view_0"),
+    Shortcut("Ctrl+K", "Commands", "commands"),
+)
+
+NOTE_FIND_SHORTCUTS = (
+    Shortcut("Enter", "Next match", "next_note_match"),
+    Shortcut("Shift+Enter", "Previous", "previous_note_match"),
+    Shortcut("Esc", "Close find", "escape"),
     Shortcut("Ctrl+K", "Commands", "commands"),
 )
 
@@ -140,18 +151,18 @@ class ShortcutBar(Widget, can_focus=False, can_focus_children=False):
 
     def __init__(self, *, id: str | None = None, classes: str | None = None) -> None:
         super().__init__(id=id, classes=classes)
-        self._mode: Literal["tasks", "search", "inspector", "notes", "notes-search"] = "tasks"
+        self._mode: Literal["tasks", "search", "inspector", "notes", "notes-search", "notes-find"] = "tasks"
         self._can_undo = True
         self._can_redo = True
 
     def set_mode(
         self,
-        mode: Literal["tasks", "search", "inspector", "notes", "notes-search"],
+        mode: Literal["tasks", "search", "inspector", "notes", "notes-search", "notes-find"],
         can_undo: bool = True,
         can_redo: bool = True,
     ) -> None:
         """Refresh contextual hints; unavailable history actions stay visible."""
-        if mode not in ("tasks", "search", "inspector", "notes", "notes-search"):
+        if mode not in ("tasks", "search", "inspector", "notes", "notes-search", "notes-find"):
             raise ValueError(f"Unknown shortcut mode: {mode}")
         state = (mode, can_undo, can_redo)
         if state != (self._mode, self._can_undo, self._can_redo):
@@ -160,6 +171,8 @@ class ShortcutBar(Widget, can_focus=False, can_focus_children=False):
 
     @property
     def shortcuts(self) -> tuple[Shortcut, ...]:
+        if self._mode == "notes-find":
+            return NOTE_FIND_SHORTCUTS
         if self._mode == "notes":
             return NOTES_SHORTCUTS
         if self._mode == "notes-search":

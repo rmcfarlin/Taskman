@@ -6,7 +6,7 @@ be locked out of the final check/replace interval by a portable stdlib API.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import os
@@ -43,6 +43,7 @@ class Note:
     projects: tuple[str, ...] = ()
     tasks: tuple[TaskLink, ...] = ()
     revision: str = ""
+    modified_ns: int = field(default=0, compare=False)
 
 
 @dataclass
@@ -213,7 +214,13 @@ class NotesStore:
 
     def load(self, file: str) -> Note:
         path = self._path(file)
-        return _parse(path.relative_to(self.root).as_posix(), self._read(file)).note
+        with path.open("rb") as stream:
+            observed = os.fstat(stream.fileno())
+            if not stat.S_ISREG(observed.st_mode):
+                raise ValueError("Note must be a regular Markdown file")
+            raw = stream.read()
+        return replace(_parse(path.relative_to(self.root).as_posix(), raw).note,
+                       modified_ns=observed.st_mtime_ns)
 
     def refresh(self) -> list[Note]:
         self.notes, self.errors = [], {}
@@ -257,6 +264,7 @@ class NotesStore:
         raise ValueError("Too many notes with the same title")
 
     def _remember(self, note: Note) -> Note:
+        note = replace(note, modified_ns=self._path(note.file).stat().st_mtime_ns)
         self.notes = sorted([item for item in self.notes if item.file != note.file] + [note],
                             key=lambda item: (item.title.casefold(), item.file.casefold()))
         self.errors.pop(note.file, None)

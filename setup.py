@@ -6,6 +6,7 @@ RUNTIME_MODULES = {
     "__init__", "__main__", "app", "commands", "diagnostics", "history",
     "settings", "shortcut_bar", "taskman", "vault_screen", "vaults",
     "notes", "notes_ui", "notes_actions", "cli", "git_sync", "terminal", "recurrence",
+    "note_files", "note_templates", "notes_dialogs",
 }
 
 

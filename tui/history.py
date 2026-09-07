@@ -1,9 +1,9 @@
 """Bounded, file-scoped undo/redo for one Taskman session.
 
-Only declared files are read. Undo/redo checks *all* affected files before
-writing, so a detected external edit never results in a partial restoration.
-Writes are atomic per file and coordinate with other Taskman writers. External
-editors do not participate in that lock; detected external changes abort undo.
+Only declared files are read. Undo/redo checks all affected files before writing
+and rolls back its own unchanged writes if a later operation fails. Writes are
+atomic per file and coordinate with other Taskman writers. External editors do
+not participate in that lock; their detected edits are preserved during rollback.
 """
 
 from __future__ import annotations
@@ -163,47 +163,125 @@ class History:
         if not source:
             return None
         entry = source[-1]
-        for change in entry.changes:
-            expected = change.after if undo else change.before
+        expected = {change.path: change.after if undo else change.before for change in entry.changes}
+        desired = {change.path: change.before if undo else change.after for change in entry.changes}
+
+        def check(relative: str, content: bytes | None) -> None:
             try:
-                current = self._read(change.path)
+                current = self._read(relative)
             except (ValueError, OSError) as error:
-                raise HistoryConflict(f"Cannot safely restore {change.path}: {error}") from error
-            if current != expected:
-                raise HistoryConflict(
-                    f"{change.path} changed outside this action; no files were restored."
-                )
+                raise HistoryConflict(f"Cannot safely restore {relative}: {error}") from error
+            if current != content:
+                raise HistoryConflict(f"{relative} changed outside this action; restoration was cancelled.")
 
-        # Stage every replacement before touching the recorded files. This also
-        # makes a write/permission failure during staging leave originals intact.
+        for relative, content in expected.items():
+            check(relative, content)
+
+        # Prepare both directions before touching originals. Recovery should not
+        # need new disk allocation after a later write/unlink fails.
         staged: dict[str, Path] = {}
-        try:
-            for change in entry.changes:
-                content = change.before if undo else change.after
-                if content is None:
-                    continue
-                target = self._path(change.path)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(prefix=".taskman-undo-", dir=target.parent)
-                temporary = Path(name)
-                staged[change.path] = temporary
-                with os.fdopen(fd, "wb") as stream:
-                    stream.write(content)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                if target.exists():
-                    temporary.chmod(stat.S_IMODE(target.stat().st_mode))
+        recovery: dict[str, Path] = {}
+        probes: set[Path] = set()
+        retained: set[Path] = set()
+        applied: list[tuple[str, os.stat_result | None]] = []
 
-            for change in entry.changes:
-                target = self._path(change.path)
-                content = change.before if undo else change.after
-                if content is None:
-                    target.unlink()
-                else:
-                    os.replace(staged[change.path], target)
+        def stage(relative: str, content: bytes, collection: dict[str, Path], *, recovery_copy=False) -> None:
+            target = self._path(relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target = self._path(relative)
+            fd, name = tempfile.mkstemp(prefix=".taskman-undo-", dir=target.parent)
+            temporary = Path(name)
+            collection[relative] = temporary
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if target.exists():
+                original_stat = target.stat()
+                temporary.chmod(stat.S_IMODE(original_stat.st_mode))
+                if recovery_copy:
+                    os.utime(temporary, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+        def check_ours(relative: str, owned: os.stat_result | None) -> None:
+            check(relative, desired[relative])
+            if owned is not None:
+                current = self._path(relative).stat()
+                if (not os.path.samestat(owned, current)
+                        or current.st_mtime_ns != owned.st_mtime_ns):
+                    raise HistoryConflict(f"{relative} was replaced outside this action.")
+
+        def check_creation_support(temporary: Path) -> None:
+            # A rename may unlink its old name before creating its new name.
+            # Verify no-clobber publication and recovery are supported by this
+            # filesystem before permitting any destructive apply step.
+            probe = temporary.with_name(temporary.name + "-probe")
+            os.link(temporary, probe)
+            probes.add(probe)
+            probe.unlink()
+
+        try:
+            for relative, content in desired.items():
+                if content is not None:
+                    stage(relative, content, staged)
+                    if expected[relative] is None:
+                        check_creation_support(staged[relative])
+                if expected[relative] is not None:
+                    stage(relative, expected[relative], recovery, recovery_copy=True)
+                    if content is None:
+                        check_creation_support(recovery[relative])
+            for relative, content in expected.items():
+                check(relative, content)
+            try:
+                for relative, content in desired.items():
+                    check(relative, expected[relative])
+                    target = self._path(relative)
+                    owned = staged[relative].stat() if content is not None else None
+                    if content is None:
+                        target.unlink()
+                    elif expected[relative] is None:
+                        # No-clobber publication protects a file that appears
+                        # between the absence check and creation.
+                        os.link(staged[relative], target)
+                    else:
+                        os.replace(staged[relative], target)
+                    applied.append((relative, owned))
+                for relative, owned in applied:
+                    check_ours(relative, owned)
+            except BaseException as error:
+                unresolved = []
+                for relative, owned in reversed(applied):
+                    try:
+                        check_ours(relative, owned)
+                        target = self._path(relative)
+                        if expected[relative] is None:
+                            target.unlink()
+                        elif desired[relative] is None:
+                            os.link(recovery[relative], target)
+                        else:
+                            os.replace(recovery[relative], target)
+                    except (ValueError, OSError, HistoryConflict):
+                        # Never replace a later external edit, including a
+                        # different file that happens to have identical bytes.
+                        unresolved.append(relative)
+                        if relative in recovery:
+                            retained.add(recovery[relative])
+                if unresolved:
+                    locations = ", ".join(str(path.relative_to(self.vault)) for path in sorted(retained))
+                    detail = f" Recovery copies: {locations}." if locations else ""
+                    raise HistoryConflict(
+                        "Restoration stopped; external changes or an I/O error prevented rollback of "
+                        + ", ".join(unresolved) + ". Undo/redo history was not advanced." + detail
+                    ) from error
+                raise
             source.pop()
             destination.append(entry)
             return entry
         finally:
-            for temporary in staged.values():
-                temporary.unlink(missing_ok=True)
+            for temporary in (*staged.values(), *recovery.values(), *probes):
+                if temporary not in retained:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        # Cleanup failure must not turn a completed restoration
+                        # into a reported failure after its history was advanced.
+                        pass

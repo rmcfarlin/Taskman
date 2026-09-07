@@ -287,3 +287,237 @@ def test_only_declared_files_are_read(tmp_path, monkeypatch):
     history.undo()
     history.redo()
     assert reads and set(reads) == {"task.md"}
+
+
+def two_file_edit(vault):
+    first, second = vault / "first.md", vault / "second.md"
+    first.write_bytes(b"first before")
+    second.write_bytes(b"second before")
+    history = History(vault)
+    with history.record("Both", ["first.md", "second.md"]):
+        first.write_bytes(b"first after")
+        second.write_bytes(b"second after")
+    return history, first, second
+
+
+def note_rename(vault):
+    old, new = vault / "Old.md", vault / "New.md"
+    old.write_bytes(b"Note body")
+    history = History(vault)
+    with history.record("Rename", ["Old.md", "New.md"]):
+        old.rename(new)
+    return history, old, new
+
+
+@pytest.mark.parametrize("redo", [False, True])
+def test_later_replace_failure_rolls_back_earlier_write_and_keeps_stacks(tmp_path, monkeypatch, redo):
+    history, first, second = two_file_edit(tmp_path)
+    if redo:
+        history.undo()
+    original = first.read_bytes(), second.read_bytes()
+    original_modified = first.stat().st_mtime_ns, second.stat().st_mtime_ns
+    stacks = list(history._undo), list(history._redo)
+    replace = os.replace
+
+    def fail_second(source, destination):
+        if Path(destination) == second:
+            raise OSError("Second replace failed")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", fail_second)
+        with pytest.raises(OSError, match="Second replace failed"):
+            (history.redo if redo else history.undo)()
+    assert (first.read_bytes(), second.read_bytes()) == original
+    assert (first.stat().st_mtime_ns, second.stat().st_mtime_ns) == original_modified
+    assert (history._undo, history._redo) == stacks
+    assert not list(tmp_path.glob(".taskman-undo-*"))
+    (history.redo if redo else history.undo)()
+    assert first.read_bytes() == (b"first after" if redo else b"first before")
+
+
+def test_rename_undo_unlink_failure_removes_its_newly_created_file(tmp_path, monkeypatch):
+    history, old, new = note_rename(tmp_path)
+    unlink = Path.unlink
+
+    def fail_new(path, *args, **kwargs):
+        if path == new:
+            raise PermissionError("Cannot remove new filename")
+        return unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", fail_new)
+        with pytest.raises(PermissionError):
+            history.undo()
+    assert not old.exists() and new.read_bytes() == b"Note body"
+    assert history.can_undo and not history.can_redo
+    assert not list(tmp_path.glob(".taskman-undo-*"))
+    history.undo()
+    assert old.read_bytes() == b"Note body" and not new.exists()
+
+
+def test_rename_redo_creation_failure_restores_its_deleted_file(tmp_path, monkeypatch):
+    history, old, new = note_rename(tmp_path)
+    history.undo()
+    link = os.link
+
+    def fail_new(source, destination, *args, **kwargs):
+        if Path(destination) == new:
+            raise OSError("Cannot create new filename")
+        return link(source, destination, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "link", fail_new)
+        with pytest.raises(OSError, match="Cannot create new filename"):
+            history.redo()
+    assert old.read_bytes() == b"Note body" and not new.exists()
+    assert history.can_redo and not history.can_undo
+    assert not list(tmp_path.glob(".taskman-undo-*"))
+    history.redo()
+    assert new.read_bytes() == b"Note body" and not old.exists()
+
+
+def test_external_change_during_staging_prevents_every_restore_write(tmp_path, monkeypatch):
+    history, first, second = two_file_edit(tmp_path)
+    fsync = os.fsync
+    changed = False
+
+    def external_edit(fd):
+        nonlocal changed
+        fsync(fd)
+        if not changed:
+            changed = True
+            second.write_bytes(b"Edited during staging")
+
+    monkeypatch.setattr(os, "fsync", external_edit)
+    with pytest.raises(HistoryConflict, match="second.md"):
+        history.undo()
+    assert first.read_bytes() == b"first after"
+    assert second.read_bytes() == b"Edited during staging"
+    assert history.can_undo and not history.can_redo
+    assert not list(tmp_path.glob(".taskman-undo-*"))
+
+
+def test_external_change_to_next_target_during_apply_rolls_back_previous_target(tmp_path, monkeypatch):
+    history, first, second = two_file_edit(tmp_path)
+    replace = os.replace
+    changed = False
+
+    def external_edit(source, destination):
+        nonlocal changed
+        replace(source, destination)
+        if Path(destination) == first and not changed:
+            changed = True
+            second.write_bytes(b"Edited between writes")
+
+    monkeypatch.setattr(os, "replace", external_edit)
+    with pytest.raises(HistoryConflict, match="second.md"):
+        history.undo()
+    assert first.read_bytes() == b"first after"
+    assert second.read_bytes() == b"Edited between writes"
+    assert history.can_undo and not history.can_redo
+    assert not list(tmp_path.glob(".taskman-undo-*"))
+
+
+@pytest.mark.parametrize("same_bytes", [False, True])
+def test_rollback_preserves_external_edit_or_replacement_of_already_applied_file(tmp_path, monkeypatch, same_bytes):
+    history, first, second = two_file_edit(tmp_path)
+    replace = os.replace
+    external = b"first before" if same_bytes else b"External replacement"
+    changed = False
+
+    def external_edit(source, destination):
+        nonlocal changed
+        replace(source, destination)
+        if Path(destination) == second and not changed:
+            changed = True
+            replacement = tmp_path / "external-copy.tmp"
+            replacement.write_bytes(external)
+            replace(replacement, first)
+
+    monkeypatch.setattr(os, "replace", external_edit)
+    with pytest.raises(HistoryConflict, match="Recovery copies"):
+        history.undo()
+    assert first.read_bytes() == external
+    assert second.read_bytes() == b"second after"
+    assert history.can_undo and not history.can_redo
+    copies = list(tmp_path.glob(".taskman-undo-*"))
+    assert len(copies) == 1 and copies[0].read_bytes() == b"first after"
+
+
+def test_rollback_io_failure_keeps_recovery_bytes_and_history_entry(tmp_path, monkeypatch):
+    history, first, second = two_file_edit(tmp_path)
+    replace = os.replace
+    first_writes = 0
+
+    def fail_apply_and_rollback(source, destination):
+        nonlocal first_writes
+        if Path(destination) == first:
+            first_writes += 1
+        if Path(destination) == second or first_writes > 1:
+            raise OSError("Disk failure")
+        replace(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", fail_apply_and_rollback)
+        with pytest.raises(HistoryConflict, match="Recovery copies"):
+            history.undo()
+    assert first.read_bytes() == b"first before"
+    assert second.read_bytes() == b"second after"
+    assert history.can_undo and not history.can_redo
+    copies = list(tmp_path.glob(".taskman-undo-*"))
+    assert len(copies) == 1 and copies[0].read_bytes() == b"first after"
+    os.replace(copies[0], first)
+    history.undo()
+    assert first.read_bytes() == b"first before" and second.read_bytes() == b"second before"
+
+
+def test_new_file_appearing_at_publish_boundary_is_not_overwritten(tmp_path, monkeypatch):
+    history, old, new = note_rename(tmp_path)
+    link = os.link
+
+    def appear_before_link(source, destination, *args, **kwargs):
+        if Path(destination) == old:
+            old.write_bytes(b"External file")
+        return link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", appear_before_link)
+    with pytest.raises(FileExistsError):
+        history.undo()
+    assert old.read_bytes() == b"External file" and new.read_bytes() == b"Note body"
+    assert history.can_undo and not history.can_redo
+
+
+def test_rollback_does_not_overwrite_recreated_file_after_our_unlink(tmp_path, monkeypatch):
+    history, old, new = note_rename(tmp_path)
+    history.undo()
+    link = os.link
+
+    def recreate_deleted_file(source, destination, *args, **kwargs):
+        if Path(destination) == new:
+            old.write_bytes(b"External recreation")
+            raise OSError("Creation failed")
+        return link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", recreate_deleted_file)
+    with pytest.raises(HistoryConflict, match="Recovery copies"):
+        history.redo()
+    assert old.read_bytes() == b"External recreation" and not new.exists()
+    assert history.can_redo and not history.can_undo
+    copies = list(tmp_path.glob(".taskman-undo-*"))
+    assert len(copies) == 1 and copies[0].read_bytes() == b"Note body"
+
+
+def test_unsupported_no_clobber_creation_is_detected_before_rename_deletion(tmp_path, monkeypatch):
+    history, old, new = note_rename(tmp_path)
+    history.undo()
+
+    def unsupported(*args, **kwargs):
+        raise OSError("Hard links are not supported")
+
+    monkeypatch.setattr(os, "link", unsupported)
+    with pytest.raises(OSError, match="not supported"):
+        history.redo()
+    assert old.read_bytes() == b"Note body" and not new.exists()
+    assert history.can_redo and not history.can_undo
+    assert not list(tmp_path.glob(".taskman-undo-*"))
