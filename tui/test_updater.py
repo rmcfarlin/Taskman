@@ -319,9 +319,12 @@ def test_external_edit_while_waiting_aborts_without_replacement(installation):
 
 
 def test_tampered_plan_cannot_target_other_folder_or_run_other_helper(installation):
+    exe, _, _ = installation
     prepared = prepare(installation)
+    # Use a regular fixture file; the host Python executable may be a symlink,
+    # which would exercise link rejection before the bootstrap ownership check.
     with pytest.raises(update.UpdateError, match="bootstrap"):
-        update.apply_update(prepared.plan_path, helper_executable=Path(sys_executable()), relaunch=False)
+        update.apply_update(prepared.plan_path, helper_executable=exe, relaunch=False)
     data = json.loads(prepared.plan_path.read_bytes())
     data["install_dir"] = str(prepared.plan_path.parent.parent / "other")
     prepared.plan_path.write_text(json.dumps(data), encoding="utf-8")
