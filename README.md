@@ -91,6 +91,7 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | Space | Complete or reopen task |
 | d / p / s | Due, scheduled, and repeat / priority / status |
 | j / t / n | Project / subtask / note |
+| g / Ctrl+G | Edit task tags / filter tasks by tag |
 | i | Task details |
 | u / Ctrl+Y | Undo / redo |
 | m / h | Theme / keyboard help |
@@ -99,6 +100,14 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | q | Quit |
 
 Letter shortcuts apply while browsing tasks; typing in a text field edits the field. Use a terminal with a Unicode-capable font for the best display.
+
+## Task tags and people
+
+Select a task and press **g** to add or remove tags. Use names such as `person/alex`, `person/sam`, and `waiting`; spaces or commas separate tags, and `#` is optional in the editor. Tasks and subtasks also have an optional **Tags** field when you create them. Inline quick-add tags still work. Tags save immediately to Markdown, and **u / Ctrl+Y** undo or redo a change. Project assignment stays separate.
+
+Choose a tag in the sidebar's **Tags** section below Projects, or press **Ctrl+G** to search the tag picker. The sidebar lists tags by open-task count, highest first, with alphabetical ties; counts cover the whole vault and tags used only on closed tasks appear last with zero. Press **1** for **All open** to see that person's tasks across projects, then select a project or another view to narrow the same tag filter. The active tag stays visible in the sidebar, header, and status bar. Choose **All tags** in the sidebar or picker, use **Clear task tag filter** in Commands, or press **Esc** after closing Find to clear it. Tags match exactly, ignoring case: `person/ann` does not match `person/anna`.
+
+Find also accepts exact tags: **/** then `#person/alex #waiting budget` finds tasks with both tags and the text `budget`, within the current view and any active tag filter. Tags belong to each task individually; an untagged parent may appear dimmed for context when its child matches. Filters last for this session and reset when you open another vault.
 
 ## Application updates
 

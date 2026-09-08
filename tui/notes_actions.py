@@ -77,7 +77,8 @@ class NotesActions:
         self._selected_note_file = workspace.current.file if workspace.current else ""
         counts = tm.counts(tasks, dt.date.today())
         self.query_one("#sidebar").populate(counts, self.store.projects(),
-                                            tm.project_counts(tasks), "notes", "", len(self._notes))
+                                            tm.project_counts(tasks), "notes", "", len(self._notes),
+                                            self._task_tag_counts(tasks))
         self._summary = f"Notes · {len(matches)} of {len(self._notes)}"
         if self.size.width < 90:
             active = [self.note_category, f"#{self.note_tag}" if self.note_tag else "", self.note_project]
@@ -372,6 +373,8 @@ class NotesActions:
             def chosen(choice):
                 if choice is not None and (task := found[int(choice)]) is not None:
                     self.view, self.project, self.search_query = ("completed" if task.closed else "all"), "", ""
+                    if self.task_tag.casefold() not in {tag.casefold() for tag in task.plain_tags}:
+                        self.task_tag = ""
                     with self.prevent(Input.Changed):
                         self.query_one("#search", Input).value = ""
                     self.refresh_tasks(keep_id=task.id)

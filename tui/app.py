@@ -559,6 +559,7 @@ class TaskList(ScrollView, can_focus=True):
         self.day: dt.date = dt.date.today()
         self.view = DEFAULT_VIEW
         self.empty_message: str = "Nothing here."
+        self.empty_hint: str = ""
         self._cache: dict[tuple, Strip] = {}
 
     # -- data ---------------------------------------------------------------
@@ -798,6 +799,8 @@ class TaskList(ScrollView, can_focus=True):
             text = Text("◌", style=self._style("muted"))
         elif y == mid:
             text = Text(self.empty_message, style=self._style("empty"))
+        elif y == mid + 1 and self.empty_hint:
+            text = Text(self.empty_hint, style=self._style("muted"))
         else:
             return Strip.blank(width, base)
         text.truncate(width - 2, overflow="ellipsis")
@@ -904,7 +907,7 @@ class TaskList(ScrollView, can_focus=True):
 # ---------------------------------------------------------------------------
 
 class Sidebar(OptionList):
-    """Navigation list. Option ids: ``view:<name>`` or ``proj:<name>``."""
+    """Views, projects, and task tags; tag counts are open tasks vault-wide."""
 
     BINDINGS = [Binding("right", "app.focus_tasks", "Tasks", show=False)]
 
@@ -980,8 +983,12 @@ class Sidebar(OptionList):
 
     def populate(self, view_counts: dict[str, int], projects: list[str],
                  project_counts: dict[str, int], view: str, project: str,
-                 note_count: int = 0) -> None:
-        self._last_args = (view_counts, projects, project_counts, view, project, note_count)
+                 note_count: int = 0, tag_counts: dict[str, int] | None = None,
+                 task_tag: str = "") -> None:
+        self._last_args = (view_counts, projects, project_counts, view, project, note_count, tag_counts, task_tag)
+        cursor_id = None
+        if self.has_focus and self.highlighted is not None and self.highlighted < len(self.options):
+            cursor_id = self.options[self.highlighted].id
         opts: list[Option | None] = [
             Option(Text("VIEWS", self._s("sidebar--heading")), id="h:views", disabled=True),
         ]
@@ -1005,13 +1012,30 @@ class Sidebar(OptionList):
                 self._item(VIEW_ICON["project"], name,
                            project_counts.get(name.casefold(), 0), active),
                 id=f"proj:{name}"))
-        self.set_options(opts)
+        opts.append(None)
+        opts.append(Option(Text("TAGS", self._s("sidebar--heading")), id="h:tags", disabled=True))
+        tags = dict(tag_counts or {})
+        if task_tag and task_tag.casefold() not in {tag.casefold() for tag in tags}:
+            tags[task_tag] = 0
+        if tags:
+            opts.append(Option(self._item("#", "All tags", view_counts.get("all", 0), False), id="tag:all"))
+            for name, count in sorted(tags.items(), key=lambda item: (-item[1], item[0].casefold())):
+                active = view != "notes" and bool(task_tag) and name.casefold() == task_tag.casefold()
+                opts.append(Option(self._item("#", name, count, active), id=f"tag:value:{name.casefold()}"))
+        else:
+            opts.append(Option(Text("  g  Add task tags", self._s("sidebar--empty")), id="h:notags", disabled=True))
         # NB: index into self.options (separators are not options), not opts.
-        active_id = (f"proj:{project}" if project else f"view:{view}").casefold()
-        for i, o in enumerate(self.options):
-            if o.id is not None and o.id.casefold() == active_id:
-                self.highlighted = i
-                break
+        active_id = (f"tag:value:{task_tag}" if task_tag and view != "notes" else
+                     f"proj:{project}" if project else f"view:{view}").casefold()
+        ids = {o.id for o in opts if o is not None}
+        target_id = cursor_id.casefold() if cursor_id in ids else active_id
+        # A repaint or changing count must not trigger another navigation action.
+        with self.prevent(OptionList.OptionHighlighted):
+            self.set_options(opts)
+            for i, o in enumerate(self.options):
+                if o.id is not None and o.id.casefold() == target_id:
+                    self.highlighted = i
+                    break
 
 
 class TaskInput(Input):
@@ -1317,6 +1341,8 @@ class AddScreen(ModalScreen["dict | None"]):
                 yield TaskInput(value=self._project, placeholder="Automation",
                             suggester=SuggestFromList(self._projects, case_sensitive=False),
                             id="proj")
+            yield Label("Tags (optional · spaces or commas)", classes="field")
+            yield TaskInput(placeholder="person/alex, review", id="tags")
             with Horizontal(classes="btns"):
                 yield Button("Add", variant="primary", id="ok")
                 yield Button("Cancel", id="cancel")
@@ -1350,6 +1376,15 @@ class AddScreen(ModalScreen["dict | None"]):
                 self.query_one("#form-error", Label).update(Text(str(error)))
                 self.query_one("#proj", Input).focus()
                 return
+        try:
+            tags = tm.normalize_task_tags(self.query_one("#tags", Input).value)
+        except ValueError as error:
+            self.query_one("#form-error", Label).update(Text(str(error)))
+            self.query_one("#tags", Input).focus()
+            return
+        # Keep inline quick-add tags; the dedicated field adds only new ones.
+        existing = {tag.casefold() for tag in probe.tags} if probe else set()
+        text += "".join(f" #{tag}" for tag in tags if tag.casefold() not in existing)
         self.dismiss({"text": text, "project": proj})
 
     @on(Input.Submitted)
@@ -1362,6 +1397,62 @@ class AddScreen(ModalScreen["dict | None"]):
             self._submit()
         else:
             self.dismiss(None)
+
+
+class TaskTagsScreen(ModalScreen[bool | None]):
+    """Keep the tag draft open until validation and journaled storage succeed."""
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+s,ctrl+shift+s", "save", "Save", show=False, priority=True),
+    ]
+
+    def __init__(self, initial: tuple[str, ...], task_name: str, *,
+                 save: Callable[[tuple[str, ...]], None]) -> None:
+        super().__init__()
+        self._initial = initial
+        self._task_name = task_name
+        self._save = save
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dlg") as dlg:
+            dlg.border_title = Text(f"Tags — {self._task_name}")
+            dlg.border_subtitle = "Enter / Ctrl+S save · Esc cancel"
+            yield Label("Separate tags with spaces or commas.", classes="field first")
+            yield TaskInput(value=", ".join(self._initial), placeholder="person/alex, review", id="task-tags")
+            yield Label("Use person/alex for people. Leave blank to remove tags.", classes="field")
+            yield FormError("", id="form-error", classes="form-error")
+            with Horizontal(classes="btns"):
+                yield Button("Save", variant="primary", id="ok")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#task-tags", Input).focus()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_save(self) -> None:
+        field = self.query_one("#task-tags", Input)
+        try:
+            tags = tm.normalize_task_tags(field.value)
+            self._save(tags)
+        except (OSError, ValueError, HistoryConflict) as exc:
+            self.query_one("#form-error", Label).update(Text(f"Could not save: {exc}"))
+            field.focus()
+            return
+        self.dismiss(True)
+
+    @on(Input.Submitted)
+    def _enter(self, _event: Input.Submitted) -> None:
+        self.action_save()
+
+    @on(Button.Pressed)
+    def _button(self, event: Button.Pressed) -> None:
+        if event.button.id == "ok":
+            self.action_save()
+        else:
+            self.action_cancel()
 
 
 class EditScreen(ModalScreen["str | None"]):
@@ -1898,6 +1989,8 @@ class HelpScreen(ModalScreen[None]):
             ("d", "Dates — due, scheduled, and Repeat; Enter / Ctrl+S saves together"),
             ("p", "Priority"),
             ("j", "proJect — filter the list, or type a new name to create one"),
+            ("g", "Tags — add or remove task tags, including person/alex"),
+            ("Ctrl+G", "Filter by tag across views and projects; Esc clears after Find"),
             ("]  /  [", "indent under the previous task  /  outdent"),
             ("Delete", "delete the task, its note and its sub-tasks (asks first)"),
             ("o", "Open the note in your editor"),
@@ -2107,6 +2200,8 @@ class TaskApp(UpdateActions, NotesActions, App):
         Binding("s", "status", "Status", show=False),
         Binding("t", "add_sub", "Subtask", show=False),
         Binding("j", "project", "Project", show=False),
+        Binding("g", "task_tags", "Tags", show=False),
+        Binding("ctrl+g", "filter_task_tag", "Filter tags", show=False, priority=True),
         Binding("n", "note", "Note", show=False),
         Binding("i", "inspect", "Inspect", show=False),
         Binding("slash,f", "focus_search", "Find", key_display="/"),
@@ -2165,6 +2260,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         self.project = ""
         self._display_date = dt.date.today()
         self.search_query = ""
+        self.task_tag = ""
         self._context_ids: set[str] = set()
         self._summary = ""
         self._sidebar_hidden = False
@@ -2185,6 +2281,11 @@ class TaskApp(UpdateActions, NotesActions, App):
             return False
         if not self._vault_ready and action not in {"open_vault", "quit", "commands", "help", "theme", "check_updates"}:
             return False
+        if action in {"task_tags", "filter_task_tag", "clear_task_tag"}:
+            if self.view == "notes" or isinstance(self.screen, ModalScreen):
+                return False
+            if action == "task_tags" and isinstance(self.focused, (Input, TextArea)):
+                return False
         # Editing a search or a text field must never restore task files.
         if action in ("undo", "redo") and isinstance(self.focused, (Input, TextArea)):
             return False
@@ -2385,6 +2486,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         self._notes = []
         self._vault_ready = True
         self.view, self.project, self.search_query = DEFAULT_VIEW, "", ""
+        self.task_tag = ""
         self._command_target = self._inspected_task = None
         self._last_main_id = None
         self._context_ids.clear()
@@ -2448,9 +2550,22 @@ class TaskApp(UpdateActions, NotesActions, App):
     def _view_label(self) -> str:
         if self.view == "notes":
             return "Notes"
-        if self.project:
-            return f"◆ {self.project}"
-        return VIEW_LABEL.get(self.view, self.view)
+        label = f"◆ {self.project}" if self.project else VIEW_LABEL.get(self.view, self.view)
+        return f"{label} · #{self.task_tag}" if self.task_tag else label
+
+    @staticmethod
+    def _task_tag_counts(tasks: list[Task]) -> dict[str, int]:
+        """One count per open task/tag, merging case variants without changing Tasks."""
+        names: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        for task in tasks:
+            for tag in task.plain_tags:
+                names.setdefault(tag.casefold(), tag)
+                counts.setdefault(tag.casefold(), 0)
+            if task.open:
+                for key in {tag.casefold() for tag in task.plain_tags}:
+                    counts[key] += 1
+        return {name: counts[key] for key, name in names.items()}
 
     def refresh_tasks(self, select: int | None = None,
                       keep_id: str | None = None, *, reload: bool = True) -> None:
@@ -2485,7 +2600,8 @@ class TaskApp(UpdateActions, NotesActions, App):
         # Sidebar counts first: counts() runs view_tasks per view, and every
         # view_tasks call resets Task.context — so do it before we read flags.
         counts = tm.counts(tasks, day)
-        matches = tm.view_tasks(tasks, self.view, day, project=self.project, query=self.search_query)
+        matches = tm.view_tasks(tasks, self.view, day, project=self.project,
+                                query=self.search_query, tag=self.task_tag)
         kids = tm.child_index(tasks)
         rows: list[Row] = []
         for sec in tm.sections(matches, self.view, day):
@@ -2498,8 +2614,13 @@ class TaskApp(UpdateActions, NotesActions, App):
         self._context_ids = {t.id for t in matches if t.context}
         tl.day = day
         tl.view = self.view
-        tl.empty_message = EMPTY_STATE["search"] if self.search_query else EMPTY_STATE.get(
-            self.view, EMPTY_STATE["all"])
+        if self.task_tag:
+            tl.empty_message = f"No tasks match #{self.task_tag}."
+            tl.empty_hint = "Ctrl+G tags · Esc clear"
+        else:
+            tl.empty_hint = ""
+            tl.empty_message = EMPTY_STATE["search"] if self.search_query else EMPTY_STATE.get(
+                self.view, EMPTY_STATE["all"])
         tl.set_rows(rows, keep_id=keep_id, select=select)
 
         n = sum(1 for t in matches if not t.context)
@@ -2512,7 +2633,8 @@ class TaskApp(UpdateActions, NotesActions, App):
         self._update_crumb()
 
         self.query_one(Sidebar).populate(counts, self.store.projects(),
-                                         tm.project_counts(tasks), self.view, self.project, len(self._notes))
+                                         tm.project_counts(tasks), self.view, self.project, len(self._notes),
+                                         self._task_tag_counts(tasks), self.task_tag)
         # Status bar: what am I looking at, and how much of it is urgent.
         real = [t for t in matches if not t.context]
         hi = sum(1 for t in real if t.open and t.priority >= 4)
@@ -2520,7 +2642,8 @@ class TaskApp(UpdateActions, NotesActions, App):
         soon = sum(1 for t in real if t.open and t.due and day <= t.due <= day + dt.timedelta(days=7))
         self.query_one("#status-view", Label).update(Text(label.upper()))
         self._set_status_info(Text(
-            f"{n} task{'s' if n != 1 else ''} · {late} overdue · {soon} due ≤7d · {hi} high"
+            (f"#{self.task_tag} · " if self.task_tag else "")
+            + f"{n} task{'s' if n != 1 else ''} · {late} overdue · {soon} due ≤7d · {hi} high"
             + (f" · filter “{self.search_query}”" if self.search_query else "")))
         main_id = tl.current.id if tl.current else None
         inspected = tl.current
@@ -2582,7 +2705,8 @@ class TaskApp(UpdateActions, NotesActions, App):
         elif self.view == "notes":
             hint = "NOTES  ·  ↑↓ browse  ·  Enter edit  ·  Tab read  ·  Esc clear filters  ·  Ctrl+K actions"
         else:
-            hint = "↑↓ move  ·  Enter inspect  ·  Tab panes  ·  Ctrl+K all actions"
+            hint = ("↑↓ move  ·  Enter inspect  ·  Esc clear tag  ·  Ctrl+G filter tags" if self.task_tag
+                    else "↑↓ move  ·  Enter inspect  ·  Tab panes  ·  Ctrl+K all actions")
         self.query_one("#contextbar", Label).update(hint)
         dock = self.query_one(ShortcutBar)
         # Keep its reserved rows so a modal cannot resize the underlying note
@@ -2612,6 +2736,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         """Record only files touched by this change; restore navigation on undo."""
         current = self.query_one(TaskList).current
         context = {"view": self.view, "project": self.project, "query": self.search_query,
+                   "task_tag": self.task_tag,
                    "task_id": current.id if current else None, "note_file": self._selected_note_file,
                    "note_category": self.note_category, "note_tag": self.note_tag,
                    "note_project": self.note_project}
@@ -2642,6 +2767,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         self.view = context.get("view", self.view)
         self.project = context.get("project", self.project)
         self.search_query = context.get("query", "")
+        self.task_tag = context.get("task_tag", "")
         self._selected_note_file = context.get("note_file", "")
         if redo and context.get("renamed_note_to"):
             self._selected_note_file = context["renamed_note_to"]
@@ -2748,6 +2874,26 @@ class TaskApp(UpdateActions, NotesActions, App):
         if not option_id or option_id.startswith("h:"):
             return
         kind, _, name = option_id.partition(":")
+        if kind == "tag":
+            if option_id == "tag:all":
+                tag = ""
+            elif name.startswith("value:"):
+                key = name.removeprefix("value:")
+                tag = next((name for name in self._task_tag_counts(self.store.tasks)
+                            if name.casefold() == key), self.task_tag if self.task_tag.casefold() == key else None)
+                if tag is None:
+                    return
+            else:
+                return
+            if self.view == "notes":
+                self.view, self.project, self.search_query = "all", "", ""
+                with self.prevent(Input.Changed):
+                    self.query_one("#search", Input).value = ""
+            elif self.task_tag == tag:
+                return
+            self.task_tag = tag
+            self.refresh_tasks(select=0)
+            return
         if kind == "view":
             if self.view == name and not self.project and not self.search_query:
                 return
@@ -2951,6 +3097,9 @@ class TaskApp(UpdateActions, NotesActions, App):
             ("priority", "Change priority", "p", "Set how urgent this task is", "high low important", has_task),
             ("status", "Change status", "s", "Open, in progress, completed, or cancelled", "start progress cancel", has_task),
             ("project", "Assign project", "j", "Choose a project or create one", "move organize", has_task),
+            ("task_tags", "Edit task tags", "g", "Add or remove tags such as person/alex and review", "people assign label categorize", has_task),
+            ("filter_task_tag", "Filter tasks by tag", "Ctrl+G", "Choose a tag; keeps the current view and project. Use All open for every project", "people person tags filter", True),
+            ("clear_task_tag", "Clear task tag filter", "Esc", "Show all tags in the current view", "people tags reset all", bool(self.task_tag)),
             ("note", "Edit task note", "n", "Write context, links, or next steps", "notes details", has_task),
             ("add_sub", "Add subtask", "t", "Break the selected task into smaller steps", "child new", has_task),
             ("focus_inspector", "Read task details", "→ / Alt+3", "Open and focus the inspector; scroll with the keyboard", "inspect note read", has_task),
@@ -3050,13 +3199,15 @@ class TaskApp(UpdateActions, NotesActions, App):
         self.query_one("#search", Input).focus()
 
     def action_escape(self) -> None:
-        """Esc: clear a search first; otherwise close the inspector."""
+        """Esc: clear search, then a task tag filter, then close the inspector."""
         if self.view == "notes" and self.query_one(NotesWorkspace).dismiss_find():
             return
         search = self.query_one("#search", Input)
         if self.query_one("#searchbar").display:
             search.value = ""          # triggers Changed -> refresh
             self.query_one("#searchbar").display = False
+        elif self.view != "notes" and self.task_tag:
+            self.action_clear_task_tag()
         elif self.query_one(Inspector).display:
             self._set_inspector(False)
         elif self.view == "notes":
@@ -3167,6 +3318,8 @@ class TaskApp(UpdateActions, NotesActions, App):
 
     def _show_new_task(self, t: Task, project: str = "") -> None:
         """Make sure a freshly added task is on screen (switch view if not)."""
+        if self.task_tag.casefold() not in {tag.casefold() for tag in t.plain_tags}:
+            self.task_tag = ""
         self.search_query = ""
         self.query_one("#search", Input).value = ""
         self.action_focus_tasks()
@@ -3211,6 +3364,66 @@ class TaskApp(UpdateActions, NotesActions, App):
             self._show_new_task(nt, self.project)
             self.announce(f"Added sub-task under {t.description or t.id}")
         self.push_screen(AddScreen(self.store.projects(), parent=t.description or t.id), self._guard(_done))
+
+    def action_task_tags(self) -> None:
+        if self.view == "notes" or isinstance(self.screen, ModalScreen):
+            return
+        task = self._selected()
+        if task is None:
+            self.announce("Select a task first, then press g to edit tags")
+            return
+
+        def save(tags: tuple[str, ...]) -> None:
+            with self._task_record(task, "Edit task tags"):
+                tm.set_task_tags(self.vault, task, tags)
+
+        def done(saved: bool | None) -> None:
+            if saved:
+                self.refresh_tasks(keep_id=task.id)
+                self.announce("Tags saved")
+
+        self.push_screen(TaskTagsScreen(task.plain_tags, task.description, save=save), done)
+
+    def action_filter_task_tag(self) -> None:
+        if self.view == "notes" or isinstance(self.screen, ModalScreen):
+            return
+        # Count directly: view_tasks mutates ancestor-context flags on Tasks.
+        tags: dict[str, str] = {}
+        counts: dict[str, list[int]] = {}
+        for task in self.store.refresh():
+            for tag in {tag.casefold(): tag for tag in task.plain_tags}.values():
+                key = tag.casefold()
+                tags.setdefault(key, tag)
+                counts.setdefault(key, [0, 0])[0 if task.open else 1] += 1
+        if self.task_tag:
+            tags.setdefault(self.task_tag.casefold(), self.task_tag)
+            counts.setdefault(self.task_tag.casefold(), [0, 0])
+        commands = [Command("tag:all", "All tags", "", "Clear the task tag filter; keep this view and search", "clear reset")]
+        for key, tag in sorted(tags.items()):
+            opened, closed = counts[key]
+            commands.append(Command(f"tag:value:{key}", f"#{tag}", "Active" if key == self.task_tag.casefold() else "",
+                                    f"{opened} open · {closed} closed across the vault. Filter within the current view.",
+                                    tag))
+
+        def choose(command_id: str | None) -> None:
+            if command_id is None:
+                return
+            self.task_tag = "" if command_id == "tag:all" else tags[command_id.removeprefix("tag:value:")]
+            self.refresh_tasks(select=0)
+            self.action_focus_tasks()
+
+        context = self._view_label() + " · 1 All open shows every project"
+        if not tags:
+            context = "No task tags yet. Press g on a task to add one."
+        self.push_screen(CommandScreen(commands, context=context, title="Filter tasks by tag",
+                                       placeholder="Find a tag or person…"), choose)
+
+    def action_clear_task_tag(self) -> None:
+        if self.view == "notes" or not self.task_tag or isinstance(self.screen, ModalScreen):
+            return
+        self.task_tag = ""
+        self.refresh_tasks(select=0)
+        self.action_focus_tasks()
 
     def action_edit(self) -> None:
         if self.view == "notes":

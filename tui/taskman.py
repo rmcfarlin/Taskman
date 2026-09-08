@@ -111,6 +111,91 @@ RECURRENCE_RE = re.compile(
     r"🔁\s*([^📅🛫⏳✅❌🔺⏫🔼🔽⏬]*?)(?=📅|🛫|⏳|✅|❌|🔺|⏫|🔼|🔽|⏬|(?<![\w/])#[\w\-./]+|<!--|$)"
 )
 
+
+def _tag_matches(text: str) -> list["re.Match[str]"]:
+    """Find tags in prose, leaving Markdown links and examples literal.
+
+    This is deliberately a bounded inline scan, not a Markdown renderer.
+    Link captions and reference labels are content, just like '#section' in
+    a destination and '#example' inside backticks. Balanced bracket labels
+    may be shortcut references defined elsewhere, so their hashes stay literal.
+    """
+    protected: list[tuple[int, int]] = []
+    for pattern in (r"(?<!`)(`+)(?!`)(.*?)(?<!`)\1(?!`)", r"<[^>]*>", r"\[\[.*?\]\]"):
+        protected.extend(match.span() for match in re.finditer(pattern, text))
+    bracket_literals = list(protected)
+    for pattern in (r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>]+", r"(?i)\bwww\.[^\s<>]+"):
+        protected.extend(match.span() for match in re.finditer(pattern, text))
+    # Match labels with a stack so nested/escaped brackets and brackets in
+    # inline code cannot truncate a caption or swallow an adjacent prose tag.
+    bracket_ends: dict[int, int] = {}
+    openings: list[int] = []
+    position = 0
+    while position < len(text):
+        literal_end = next((end for start, end in bracket_literals if start <= position < end), None)
+        if literal_end is not None:
+            position = literal_end
+            continue
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if char == "[":
+            openings.append(position)
+        elif char == "]" and openings:
+            bracket_ends[openings.pop()] = position + 1
+        position += 1
+    protected.extend(bracket_ends.items())
+    # Inline destinations may contain nested parentheses or escaped closers.
+    # Start only after an actual label, never an escaped/unmatched ']'.
+    for label_end in bracket_ends.values():
+        if label_end >= len(text) or text[label_end] != "(":
+            continue
+        destination_start = label_end + 1
+        position, depth = destination_start, 1
+        quote = ""
+        angle = False
+        while position < len(text) and depth:
+            char = text[position]
+            if char == "\\":
+                position += 2
+                continue
+            if quote:
+                if char == quote:
+                    quote = ""
+            elif angle:
+                if char == ">":
+                    angle = False
+            elif char in ("'", '"') and (position == destination_start or text[position - 1].isspace()):
+                quote = char
+            elif char == "<" and (position == destination_start or text[position - 1].isspace()):
+                angle = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            position += 1
+        if depth == 0:
+            protected.append((destination_start, position))
+    matches: list[re.Match[str]] = []
+    for match in TAG_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in protected):
+            continue
+        # An odd run of backslashes escapes a literal '#'.
+        start = match.start()
+        while start and text[start - 1] == "\\":
+            start -= 1
+        if (match.start() - start) % 2:
+            continue
+        matches.append(match)
+    return matches
+
+
+def _remove_task_tags(text: str) -> str:
+    for match in reversed(_tag_matches(text)):
+        text = text[:match.start()] + " " + text[match.end():]
+    return text
+
 # Folders never scanned (plugin code, history, templates with placeholder boxes).
 EXCLUDE_DIRS = {
     ".obsidian", ".git", ".taskman", "docs", "scripts", "Templates", "tui",
@@ -313,7 +398,7 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
         scheduled=_first_date(SCHED_RE, body),
         done_date=_first_date(DONE_RE, body),
         cancelled_date=_first_date(CANCEL_RE, body),
-        tags=tuple(TAG_RE.findall(body)),
+        tags=tuple(match.group(1) for match in _tag_matches(body)),
         indent=indent,
         bullet=bullet,
         raw=line.rstrip("\n"),
@@ -327,7 +412,7 @@ def parse_task_line(line: str, file: str = "", lineno: int = 0) -> "Task | None"
         desc = desc.replace(emo, " ")
     for rx in DATE_RES:
         desc = rx.sub(" ", desc)
-    desc = TAG_RE.sub(" ", desc)
+    desc = _remove_task_tags(desc)
     task.description = re.sub(r"\s+", " ", desc).strip()
     return task
 
@@ -620,8 +705,9 @@ def is_inbox(t: Task) -> bool:
 
 def view_tasks(tasks: Iterable[Task], view: str,
                day: "dt.date | None" = None, project: str = "",
-               query: str = "", with_parents: bool = True) -> list[Task]:
-    """Filter tasks for a named view (+ optional project / search query).
+               query: str = "", with_parents: bool = True,
+               tag: str = "") -> list[Task]:
+    """Filter tasks for a named view (+ optional project / query / exact tag).
 
     With ``with_parents`` (default), ancestors of matches are included too so
     a sub-task is never shown orphaned; they are flagged ``context=True``
@@ -633,6 +719,11 @@ def view_tasks(tasks: Iterable[Task], view: str,
         t.context = False
     day = today(day)
     q = query.strip().casefold()
+    query_tag_re = re.compile(r"(?<!\S)#([\w\-./]+)(?=\s|$)")
+    query_tags = set(query_tag_re.findall(q))
+    if query_tags:
+        q = " ".join(query_tag_re.sub(" ", q).split())
+    wanted_tag = tag.strip().removeprefix("#").casefold()
     out: list[Task] = []
     for t in task_list:
         if view == "inbox" and not is_inbox(t):
@@ -661,6 +752,11 @@ def view_tasks(tasks: Iterable[Task], view: str,
                           "completed", "priority", "project", "search", "alltasks"):
             raise ValueError(f"unknown view: {view!r}")
         if q and q not in f"{t.description} {t.file} {' '.join(t.tags)}".casefold():
+            continue
+        ordinary_tags = {g.casefold() for g in t.plain_tags}
+        if wanted_tag and wanted_tag not in ordinary_tags:
+            continue
+        if not query_tags.issubset(ordinary_tags):
             continue
         out.append(t)
     if with_parents and out:
@@ -1419,6 +1515,88 @@ def set_priority(root: "str | Path", t: Task, level: int) -> Task:
     if not 0 <= level <= 5:
         raise ValueError("priority level must be 0..5")
     return _edit_task(root, t, lambda cur: setattr(cur, "priority", level))
+
+
+def normalize_task_tags(value: "str | Iterable[str]") -> tuple[str, ...]:
+    """Read ordinary task tags, rejecting input that Markdown would truncate.
+
+    Spaces and commas separate tags; '#' is optional. Nested tags such as
+    person/Ariann are supported. Project assignment has its own control.
+    Deduplication is case-insensitive and keeps the first spelling.
+    """
+    values = (value,) if isinstance(value, str) else value
+    tags: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError("Tags must be text separated by spaces or commas")
+        for token in re.split(r"[\s,]+", item.strip()):
+            if not token:
+                continue
+            tag = token.removeprefix("#")
+            if not re.fullmatch(r"[\w\-./]+", tag):
+                raise ValueError(
+                    f"Invalid tag {token!r}. Use letters, numbers, _, -, ., or /; "
+                    "separate tags with spaces or commas."
+                )
+            key = tag.casefold()
+            if key.startswith("project/"):
+                raise ValueError("Use Project to change project/ tags; this field is for ordinary tags")
+            if key not in seen:
+                seen.add(key)
+                tags.append(tag)
+    return tuple(tags)
+
+
+def _task_line_with_tags(raw: str, tags: tuple[str, ...]) -> str:
+    """Replace only ordinary tag tokens, keeping handwritten metadata intact."""
+    matches = [match for match in _tag_matches(raw)
+               if not match.group(1).casefold().startswith("project/")]
+    replacement = " ".join(f"#{tag}" for tag in tags)
+    if matches:
+        body_start = TASK_LINE_RE.match(raw).start(3)
+        for index, match in reversed(list(enumerate(matches))):
+            inserted = replacement if index == 0 else ""
+            start = match.start()
+            if not inserted:
+                # Remove the gap owned by a removed tag, without rewriting
+                # spacing, optional date times, IDs, or any other tokens.
+                lower = matches[index - 1].end() if index else body_start
+                while start > lower and raw[start - 1].isspace():
+                    start -= 1
+            raw = raw[:start] + inserted + raw[match.end():]
+        return raw
+    if not replacement:
+        return raw
+    # Keep both Taskman's durable IDs and Obsidian's terminal block ID at
+    # the end of the line when adding its first ordinary tag.
+    markers = [match.start() for rx in (TASK_ANCHOR_RE, RECURRENCE_NEXT_RE)
+               for match in rx.finditer(raw)]
+    block_id = re.search(r"(?<!\S)\^[\w-]+\s*$", raw)
+    if block_id:
+        markers.append(block_id.start())
+    position = min(markers) if markers else len(raw.rstrip())
+    prefix, suffix = raw[:position], raw[position:]
+    gap_before = "" if not prefix or prefix[-1].isspace() else " "
+    gap_after = " " if suffix and not suffix[0].isspace() else ""
+    return prefix + gap_before + replacement + gap_after + suffix
+
+
+def set_task_tags(root: "str | Path", task: Task,
+                  value: "str | Iterable[str]") -> Task:
+    """Replace ordinary tags while preserving project tags and all other text.
+
+    An empty value clears ordinary tags. Use the normal history record around
+    this operation; it writes only the selected task's current Markdown file.
+    """
+    tags = normalize_task_tags(value)
+    root = normalize_folder(root)
+    with vault_write_lock(root):
+        current, _tasks, original = _task_snapshot(root, task)
+        line = current.raw if current.plain_tags == tags else _task_line_with_tags(current.raw, tags)
+        _commit_text(root, current.file, original,
+                     _changed_lines(original, {current.lineno: line}))
+        return _updated_task(root, task, current)
 
 
 def edit_text(root: "str | Path", t: Task, description: str) -> Task:

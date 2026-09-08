@@ -189,10 +189,13 @@ class CommandScreen(ModalScreen[str | None]):
     CommandScreen #command-footer { height: 1; }
     """ + COMPACT_DIALOG_CSS
 
-    def __init__(self, commands: list[Command], context: str = "") -> None:
+    def __init__(self, commands: list[Command], context: str = "", *,
+                 title: str = "Commands", placeholder: str = "Search actions, views, or shortcuts…") -> None:
         super().__init__()
         self.commands = list(commands)
         self.context = re.sub(r"\s+", " ", context).strip()
+        self.title_text = title
+        self.placeholder = placeholder
         self.matches: list[Command] = []
         self._commands_by_id = {command.id: command for command in commands}
         if len(self._commands_by_id) != len(commands):
@@ -201,10 +204,10 @@ class CommandScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="command-dialog", classes="compact-dialog"):
             with Horizontal(id="command-heading"):
-                yield Static("Commands", id="command-title")
+                yield Static(self.title_text, id="command-title", markup=False)
                 yield Static("", id="command-count")
             yield Static(self.context, id="command-context", markup=False)
-            yield Input(placeholder="Search actions, views, or shortcuts…", compact=True, id="command-input")
+            yield Input(placeholder=self.placeholder, compact=True, id="command-input")
             results = OptionList(id="command-results", compact=True)
             results.can_focus = False
             yield results

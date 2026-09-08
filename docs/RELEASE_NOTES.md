@@ -1,3 +1,13 @@
+# Taskman 3.3.0
+
+Tag tasks by person or topic, then find them across projects or within a project. Existing Markdown vaults need no migration.
+
+- Added a **Tags** section below Projects in the sidebar, sorted by open-task count from highest to lowest with alphabetical ties. Choose tags with the mouse or keyboard and use **All tags** to clear the filter. Counts update as tasks change; selecting a task tag from Notes opens All open.
+- Added **g** to edit task tags and a **Tags** field when adding tasks or subtasks. Tags such as `person/alex` and `waiting` accept spaces or commas, preserve project assignment and task details, and support undo/redo.
+- Added **Ctrl+G** to filter tasks by an exact tag, including people such as `person/alex`, across projects. The filter combines with the current view and Find, remains visible while navigating, and clears through **All tags**, Commands, or **Esc** after Find.
+- Find understands exact `#tag` terms, including multiple tags combined with text. Tag matching ignores case and keeps untagged parents visible as context for matching subtasks.
+- Markdown links, Obsidian wikilinks, URL fragments, and inline code examples stay intact when editing task tags.
+
 # Taskman 3.2.0
 
 This release gives tasks and notes more room and adds a GitHub release updater that checks automatically and installs after acceptance.

@@ -32,6 +32,10 @@ def repo(tmp_path, *, remote=True, name="vault", remote_name="origin"):
     root = tmp_path / name
     root.mkdir()
     git(root, "init", "--initial-branch=main")
+    # Full snapshots include Git metadata. Prevent background maintenance from
+    # creating/removing its lock after a fixture command has already returned.
+    git(root, "config", "maintenance.auto", "false")
+    git(root, "config", "gc.auto", "0")
     git(root, "config", "user.name", "Taskman Test")
     git(root, "config", "user.email", "taskman@example.invalid")
     (root / "Task.md").write_text("- [ ] Original\n", encoding="utf-8")
@@ -48,6 +52,8 @@ def bare(tmp_path, name):
     path = tmp_path / name
     path.mkdir()
     git(path, "init", "--bare", "--initial-branch=main")
+    git(path, "config", "maintenance.auto", "false")
+    git(path, "config", "gc.auto", "0")
     return path
 
 
@@ -467,7 +473,8 @@ def test_symbolic_tracking_ref_never_updates_its_local_branch_target(tmp_path, m
 def test_non_fast_forward_push_keeps_both_histories(tmp_path):
     root, destination = repo(tmp_path)
     assert sync.push_vault(root).pushed
-    git(tmp_path, "clone", str(destination), "other-clone")
+    git(tmp_path, "clone", "--config", "maintenance.auto=false", "--config", "gc.auto=0",
+        str(destination), "other-clone")
     other = tmp_path / "other-clone"
     git(other, "config", "user.name", "Other writer")
     git(other, "config", "user.email", "other@example.invalid")
