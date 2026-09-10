@@ -212,7 +212,7 @@ def _conpty_probe(folder: Path, executable: Path | None) -> int:
         report["win32_input_requested"] = True
         offset = len(snapshot())
         press("\x13", 0x08, 0x53)
-        wait_until(lambda: "All changes saved to Markdown" in plain(offset), "Ctrl+S acknowledgement")
+        wait_until(lambda: "Rescanned vault" in plain(offset), "Ctrl+S acknowledgement")
         assert not _git(remote, "for-each-ref", "--format=%(refname)", "refs/heads")
         assert _git(vault, "rev-parse", "HEAD") == original_head
         report["ctrl_s_did_not_push"] = True

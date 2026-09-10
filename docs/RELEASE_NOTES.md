@@ -1,3 +1,17 @@
+# Taskman 3.3.1
+
+Keyboard-first polish on top of 3.3.0 tags. Existing Markdown vaults need no migration.
+
+- Opening a vault lands on **Inbox** when nothing is open, **All open** when open tasks exist but Now is empty, and **Now** otherwise.
+- At typical terminal widths, the status row teaches dock keys that fell off the two-row shortcut bar (`also: d Dates · …`).
+- When the sidebar is hidden, **←** / **Alt+1** open a compact view picker instead of the full command palette.
+- Inspector subtasks: **Enter** and click keep the highlight; **Space** still completes. Help and the dock match that behavior.
+- **Ctrl+S** rescans the vault from disk and announces the open-task count. Edits still save immediately.
+- Automatic update prompts wait 15 seconds after start so they do not interrupt the first keystrokes. Manual **Check for updates** stays immediate.
+- Notes dock **1** is labeled **All open**. Dates dialog controls stay fully visible from 60×20 up.
+- Shared Windows reserved-name checks for notes, templates, projects, and the updater (including `CONIN$` and superscript device names).
+- Packaging cleanup: closed `RUNTIME_MODULES` allowlist test, README version guard, CI on Python 3.10 and 3.13, aligned `requirements.txt`, and removal of dead theme/CLI leftover APIs.
+
 # Taskman 3.3.0
 
 Tag tasks by person or topic, then find them across projects or within a project. Existing Markdown vaults need no migration.

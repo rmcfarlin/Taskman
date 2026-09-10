@@ -46,6 +46,7 @@ from typing import Callable, Union
 from contextlib import contextmanager
 from functools import wraps
 
+from rich.cells import cell_len
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
@@ -63,35 +64,19 @@ from textual.theme import Theme
 from textual.widgets import Button, Input, Label, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-try:  # `python -m tui` (package) vs `python tui/app.py` (script)
-    from tui import taskman as tm
-    from tui.taskman import Task
-    from tui.commands import Command, CommandScreen
-    from tui.history import History, HistoryConflict
-    from tui.shortcut_bar import ShortcutBar
-    from tui.diagnostics import record_error
-    from tui import settings, git_sync
-    from tui.vaults import discover_vault, initialize_vault, normalize_folder
-    from tui.vault_screen import VaultScreen, VaultChoice
-    from tui.notes import NotesStore, NoteConflict
-    from tui.notes_ui import NotesWorkspace
-    from tui.notes_actions import NotesActions
-    from tui.update_actions import UpdateActions
-except ImportError:  # pragma: no cover -- direct-script fallback
-    import taskman as tm  # type: ignore[no-redef]
-    from taskman import Task  # type: ignore[no-redef]
-    from commands import Command, CommandScreen
-    from history import History, HistoryConflict
-    from shortcut_bar import ShortcutBar
-    from diagnostics import record_error
-    import settings
-    import git_sync
-    from vaults import discover_vault, initialize_vault, normalize_folder
-    from vault_screen import VaultScreen, VaultChoice
-    from notes import NotesStore, NoteConflict
-    from notes_ui import NotesWorkspace
-    from notes_actions import NotesActions
-    from tui.update_actions import UpdateActions
+from tui import taskman as tm
+from tui.taskman import Task
+from tui.commands import Command, CommandScreen
+from tui.history import History, HistoryConflict
+from tui.shortcut_bar import Shortcut, ShortcutBar
+from tui.diagnostics import record_error
+from tui import settings, git_sync
+from tui.vaults import discover_vault, initialize_vault, is_reserved_windows_name, normalize_folder
+from tui.vault_screen import VaultScreen, VaultChoice
+from tui.notes import NotesStore, NoteConflict
+from tui.notes_ui import NotesWorkspace
+from tui.notes_actions import NotesActions
+from tui.update_actions import UpdateActions
 
 # Views shown in the sidebar: (hotkey, view-name, label). Order = 1..7 keys.
 SIDEBAR_VIEWS: tuple[tuple[str, str, str], ...] = (
@@ -109,6 +94,32 @@ VIEW_ICON = {
     "inbox": "▤", "priority": "▲", "completed": "✓", "project": "◆",
 }
 DEFAULT_VIEW = "now"
+_HINT_ACTIONS = ("due", "task_tags", "project", "help", "notes")
+
+
+def _opening_view(tasks) -> str:
+    day = dt.date.today()
+    if not any(task.open for task in tasks):
+        return "inbox"
+    if not tm.view_tasks(tasks, "now", day):
+        return "all"
+    return DEFAULT_VIEW
+
+
+def _format_hidden_hint(hidden: tuple[Shortcut, ...], limit: int = 42) -> str:
+    by_action = {item.action: item for item in hidden}
+    ranked = [by_action[action] for action in _HINT_ACTIONS if action in by_action]
+    ranked.extend(item for item in hidden if item.action not in _HINT_ACTIONS)
+    chosen: list[str] = []
+    for item in ranked:
+        piece = f"{item.key} {item.label}"
+        trial = "also: " + " · ".join((*chosen, piece))
+        if chosen and cell_len(trial) > limit:
+            break
+        chosen.append(piece)
+        if len(chosen) == 4:
+            break
+    return "also: " + " · ".join(chosen) if chosen else ""
 
 # Status char -> (glyph, component-class suffix). Glyph shapes differ, so
 # status never relies on color alone.
@@ -261,12 +272,6 @@ THEMES: tuple[tuple[str, str, bool], ...] = tuple(
 DEFAULT_THEME = "taskman-dark-teal"
 THEME_ALIASES = {"taskman-rcm": "taskman-dark-teal", "catppuccin-latte": "taskman-light"}
 HIGH_CONTRAST = "high-contrast"
-THEME_FILE = "theme.txt"  # compatibility for callers passing an explicit file
-
-
-def teal_theme() -> Theme:
-    """The original Teal theme object, kept for existing callers."""
-    return DARK_THEMES[0][0]
 
 
 def theme_swatch(name: str) -> Text:
@@ -314,10 +319,6 @@ def high_contrast_theme() -> Theme:
             "block-cursor-blurred-foreground": "#ffffff",
         },
     )
-
-
-def theme_file_path() -> Path:
-    return settings.config_dir() / THEME_FILE
 
 
 def read_theme_file(path: Path | None = None) -> str:
@@ -1089,7 +1090,7 @@ class SearchInput(TaskInput):
 # ---------------------------------------------------------------------------
 
 class Inspector(VerticalScroll, can_focus=True):
-    """Deeper dive on the selected task: facts, SUB-TASKS (Enter toggles
+    """Deeper dive on the selected task: facts, SUB-TASKS (Space completes
     one), and the NOTE in full. The pane takes focus for keyboard scrolling;
     Tab reaches the sub-task list, where task actions target the child."""
 
@@ -1285,15 +1286,13 @@ def validate_project_name(raw: str, vault: str | Path | None = None) -> str:
             or any(part.strip() in (".", "..") for part in segments)
             or any(not part for part in segments)):
         raise ValueError("Use a relative project name, such as Work/Planning.")
+    if any(is_reserved_windows_name(part) for part in segments):
+        raise ValueError("Choose a project name that Windows can use as a folder or file.")
     clean = tm.clean_project_name(raw)
     if not clean:
         raise ValueError("Give the project a name containing letters or numbers.")
-    reserved = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
-    reserved.update(f"{prefix}{number}" for prefix in ("COM", "LPT")
-                    for number in "123456789¹²³")
     for part in clean.split("/"):
-        stem = part.partition(".")[0].upper()
-        if (not part or part.endswith((".", " ")) or stem in reserved
+        if (not part or part.endswith((".", " ")) or is_reserved_windows_name(part)
                 or any(ord(char) < 32 for char in part)):
             raise ValueError("Choose a project name that Windows can use as a folder or file.")
     if vault is not None:
@@ -2015,7 +2014,7 @@ class HelpScreen(ModalScreen[None]):
         )),
         ("App", (
             ("Ctrl+O", "Open Vault — browse folders, recent vaults, or set up a new folder"),
-            ("Ctrl+S", "Confirm saved — task changes save immediately to Markdown"),
+            ("Ctrl+S", "Rescan the vault from disk (edits already save immediately)"),
             ("Ctrl+Shift+S", "Commit and push this vault to its existing Git remote"),
             ("m", "theMe — Teal · Ocean · Ember · Iris · Moss · Darcula · One Dark · Dark Teal (+ Light, High contrast)"),
             ("h", "Help — this screen"),
@@ -2057,11 +2056,7 @@ def guard_change(method):
     """Keep a filesystem or validation error from terminating the interface."""
     @wraps(method)
     def guarded(self, *args, **kwargs):
-        try:
-            return method(self, *args, **kwargs)
-        except (OSError, ValueError, HistoryConflict, NoteConflict) as exc:
-            self._change_failed(exc)
-            return None
+        return self._guard(lambda: method(self, *args, **kwargs))()
     return guarded
 
 
@@ -2084,7 +2079,7 @@ class OpeningVaultScreen(ModalScreen):
 
 
 class TaskApp(UpdateActions, NotesActions, App):
-    """Markdown-native task manager for the C:\\Tasks vault."""
+    """Keyboard-first task and notes manager for a Markdown vault."""
 
     ENABLE_COMMAND_PALETTE = False
 
@@ -2122,7 +2117,6 @@ class TaskApp(UpdateActions, NotesActions, App):
     #status-info { width: 1fr; min-width: 1; padding: 0 1; color: $text-muted; text-wrap: nowrap; text-overflow: ellipsis; }
     #status-info.-message { color: $foreground; text-style: bold; }
     #status-right { width: auto; max-width: 35%; text-wrap: nowrap; text-overflow: ellipsis; padding: 0 1; color: $text-muted; }
-    #contextbar { display: none; height: 1; width: 1fr; padding: 0 2; color: $text-muted; background: $background; text-wrap: nowrap; text-overflow: ellipsis; }
     #shortcuts { background: $background; }
 
     /* dialogs */
@@ -2152,7 +2146,7 @@ class TaskApp(UpdateActions, NotesActions, App):
     #dlg .hint { color: $text-muted; margin-top: 1; }
     #dlg .form-error { height: auto; color: $text-error; }
     #dlg.dates { padding: 0 1; }
-    #dlg.dates .field { margin-top: 0; }
+    #dlg.dates .field { margin-top: 0; height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
     #dlg.dates Input { height: 1; border: none; background: $panel; padding: 0 1; }
     #dlg.dates Input:focus { background: $primary 25%; }
     #dlg.dates .btns { height: 1; margin-top: 0; }
@@ -2160,6 +2154,8 @@ class TaskApp(UpdateActions, NotesActions, App):
     #dlg.dates #repeat-row { height: 1; }
     #dlg.dates #repeat { width: 1fr; }
     #dlg.dates #repeat-presets { height: 1; border: none; min-width: 9; width: 9; margin-left: 1; }
+    #dlg.dates #date-help { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    #dlg.dates .form-error { margin-top: 0; }
     #dlg.help { width: 92; height: 90%; overflow-y: hidden; }
     #help-content { height: 1fr; padding: 0 1; border: none; scrollbar-size-vertical: 1; }
     #help-content:focus { border-left: solid $accent; }
@@ -2214,7 +2210,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         Binding("alt+2", "focus_tasks", "Focus tasks", show=False),
         Binding("alt+3", "focus_inspector", "Focus inspector", show=False),
         # Hidden (documented in Help)
-        Binding("ctrl+s", "save", "Saved to Markdown", show=False),
+        Binding("ctrl+s", "save", "Rescan vault", show=False),
         Binding("ctrl+shift+s", "push_vault", "Push vault", show=False),
         Binding("o", "open_note", "Open in editor", show=False),
         Binding("r", "refresh", "Rescan", show=False),
@@ -2357,7 +2353,6 @@ class TaskApp(UpdateActions, NotesActions, App):
             inspector = Inspector(id="inspector")
             inspector.display = False
             yield inspector
-        yield Label("", id="contextbar")
         with Horizontal(id="statusbar"):
             yield Label("", id="status-view")
             yield Label("", id="status-info")
@@ -2396,7 +2391,8 @@ class TaskApp(UpdateActions, NotesActions, App):
         # focus event. Screen changes must also restore the contextual dock.
         self.screen_change_signal.subscribe(self, self._screen_context_changed)
         if self._vault_ready:
-            self.refresh_tasks(select=0)
+            self.view = _opening_view(self.store.refresh())
+            self.refresh_tasks(select=0, reload=False)
             self._remember_vault()
         else:
             self._summary = "Choose a folder to begin"
@@ -2485,7 +2481,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         self._selected_note_file = ""
         self._notes = []
         self._vault_ready = True
-        self.view, self.project, self.search_query = DEFAULT_VIEW, "", ""
+        self.view, self.project, self.search_query = _opening_view(self.store.tasks), "", ""
         self.task_tag = ""
         self._command_target = self._inspected_task = None
         self._last_main_id = None
@@ -2534,7 +2530,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         self.query_one("#clock").display = width >= 100
         self.query_one("#search-hint").display = width >= 80
         self.query_one("#status-info").display = True
-        self.query_one("#status-right").display = width >= 90
+        self._apply_status_right()
         self.query_one("#status-view").display = width >= 50
         if self.is_mounted:
             self.query_one(TaskList).border_title = Text(
@@ -2687,31 +2683,28 @@ class TaskApp(UpdateActions, NotesActions, App):
             self._show_reference_links(t)
         self._context_hint()
 
-    def _context_hint(self) -> None:
-        if not self.is_mounted or not super().query("#contextbar"):
+    def _apply_status_right(self, brief: str | None = None) -> None:
+        if not self.is_mounted:
             return
-        if isinstance(self.focused, SearchInput):
-            hint = "FIND  ·  Enter / ↓ results  ·  Esc clear"
-        elif isinstance(self.focused, Sidebar):
-            hint = "VIEWS  ·  ↑↓ browse  ·  Enter / → tasks  ·  Ctrl+K projects"
-        elif isinstance(self.focused, Inspector):
-            hint = "INSPECT  ·  ↑↓ / PgUp / PgDn scroll  ·  Tab subtasks  ·  ← back"
-        elif self.focused and self.focused.id == "ins-kids":
-            hint = "SUBTASKS  ·  Space complete child  ·  e edit  ·  n note  ·  Esc back"
-        elif self.focused and self.focused.id == "notes-preview":
-            hint = "READING  ·  ↑↓ / PgUp / PgDn scroll  ·  ← notes  ·  Ctrl+F within note  ·  e edit"
-        elif self.focused and self.focused.id == "notes-find":
-            hint = "WITHIN NOTE  ·  Enter next  ·  Shift+Enter previous  ·  Esc close"
-        elif self.view == "notes":
-            hint = "NOTES  ·  ↑↓ browse  ·  Enter edit  ·  Tab read  ·  Esc clear filters  ·  Ctrl+K actions"
-        else:
-            hint = ("↑↓ move  ·  Enter inspect  ·  Esc clear tag  ·  Ctrl+G filter tags" if self.task_tag
-                    else "↑↓ move  ·  Enter inspect  ·  Tab panes  ·  Ctrl+K all actions")
-        self.query_one("#contextbar", Label).update(hint)
+        dock = self.query_one(ShortcutBar)
+        width = self.size.width
+        hidden = dock.hidden_shortcuts(max(1, dock.content_size.width or width))
+        right = self.query_one("#status-right", Label)
+        right.display = width >= 90 or bool(hidden)
+        if hidden:
+            limit = max(18, min(42, width * 35 // 100 - 2))
+            right.update(_format_hidden_hint(hidden, limit))
+        elif brief is not None:
+            right.update(brief)
+
+    def _context_hint(self) -> None:
+        if not self.is_mounted:
+            return
         dock = self.query_one(ShortcutBar)
         # Keep its reserved rows so a modal cannot resize the underlying note
         # and clamp the reader's scroll position. Hidden keys cannot be clicked.
         dock.visible = not isinstance(self.screen, ModalScreen)
+        brief = None
         if self.view != "notes":
             tl = self.query_one(TaskList)
             brief = ("Enter / ↓ results · Esc clear" if isinstance(self.focused, SearchInput) else
@@ -2719,7 +2712,7 @@ class TaskApp(UpdateActions, NotesActions, App):
                      "↑↓ scroll · ← tasks" if isinstance(self.focused, Inspector) else
                      "Space complete child · Esc back" if self.focused and self.focused.id == "ins-kids" else
                      f"{tl.cursor_ordinal}/{tl.task_count}")
-            self.query_one("#status-right", Label).update(brief)
+        self._apply_status_right(brief)
         self.query_one(ShortcutBar).set_mode(
             "notes-find" if self.focused and self.focused.id == "notes-find" else
             ("notes-search" if self.view == "notes" else "search") if isinstance(self.focused, SearchInput)
@@ -2919,19 +2912,9 @@ class TaskApp(UpdateActions, NotesActions, App):
         self.action_focus_tasks()
 
     @on(OptionList.OptionSelected, "#ins-kids")
-    @guard_change
-    def _inspector_kid_toggled(self, e: OptionList.OptionSelected) -> None:
-        oid = e.option_id or ""
-        kid = next((x for x in self.store.tasks if f"k:{x.id}" == oid), None)
-        if kid is None:
-            return
-        parent = self._selected()
-        with self._task_record(kid, "Complete subtask" if not kid.done else "Reopen subtask"):
-            tm.toggle(self.vault, kid)
-        self.refresh_tasks(keep_id=parent.id if parent else None)
-        self._announce_completion(kid, f"{'Done' if kid.done else 'Reopened'}: {kid.description or kid.id}")
-        ol = self.query_one("#ins-kids", OptionList)
-        if ol.option_count:
+    def _inspector_kid_activated(self, e: OptionList.OptionSelected) -> None:
+        ol = e.option_list
+        if ol.option_count and e.option_index is not None:
             ol.highlighted = min(e.option_index, ol.option_count - 1)
 
     # -- pickers ------------------------------------------------------------------
@@ -3049,7 +3032,12 @@ class TaskApp(UpdateActions, NotesActions, App):
             self.announce(f"Project: {project}")
 
     def action_save(self) -> None:
-        self.announce("All changes saved to Markdown")
+        selected = self._selected()
+        self.store.refresh(force=True)
+        self.refresh_tasks(keep_id=selected.id if selected else None, reload=False)
+        open_count = sum(1 for task in self.store.tasks if task.open)
+        self.announce(
+            f"Rescanned vault · {open_count} open task{'s' if open_count != 1 else ''}")
 
     def action_push_vault(self) -> None:
         if not self._vault_ready or self._opening_vault or isinstance(self.screen, ModalScreen):
@@ -3113,7 +3101,7 @@ class TaskApp(UpdateActions, NotesActions, App):
             ("theme", "Change theme", "m", "Preview colors live; Escape restores your current theme", "appearance color dark teal", True),
             ("refresh", "Rescan vault", "r", "Reload changes made in Obsidian or your editor", "refresh sync", True),
             ("open_note", "Open source note", "o", "Open this Markdown file in your editor", "file markdown", has_task),
-            ("save", "Save changes", "Ctrl+S", "Task changes are saved automatically to Markdown", "save files", True),
+            ("save", "Rescan vault", "Ctrl+S", "Reload Markdown from disk and announce the open-task count", "save files refresh", True),
             ("push_vault", "Push vault", "Ctrl+Shift+S", "Commit vault changes and push to the existing Git remote", "git github remote sync upload backup", not self._pushing_vault),
             ("check_updates", "Check for updates", "", "Find new Taskman releases on GitHub and install when ready", "app version upgrade download release", not self._pushing_vault),
             ("open_vault", "Open Vault…", "Ctrl+O", "Choose a folder or set up a new vault", "folder switch recent workspace", True),
@@ -3179,8 +3167,23 @@ class TaskApp(UpdateActions, NotesActions, App):
         sidebar = self.query_one(Sidebar)
         if sidebar.display:
             sidebar.focus()
-        else:
-            self.action_commands()
+            return
+        if isinstance(self.screen, ModalScreen):
+            return
+        options = [(name, Text(f"{key} {label}")) for key, name, label in SIDEBAR_VIEWS]
+        options.append(("notes", Text("8 Notes")))
+        current = self.view if self.view in VIEW_LABEL or self.view == "notes" else None
+
+        def picked(name: str | None) -> None:
+            if name is None:
+                return
+            if name == "notes":
+                self.action_notes()
+                return
+            index = next(i for i, (_, view, _) in enumerate(SIDEBAR_VIEWS) if view == name)
+            self._goto_view(index)
+
+        self.push_screen(PickScreen("Views", options, current=current), picked)
 
     def action_focus_inspector(self) -> None:
         if self.view == "notes":

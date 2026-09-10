@@ -249,6 +249,27 @@ def test_compact_forms_keep_action_buttons_visible(keyboard_vault, key):
     asyncio.run(go())
 
 
+def test_narrow_sidebar_focus_opens_view_picker_not_commands(keyboard_vault):
+    async def go():
+        app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
+        async with app.run_test(notifications=True, size=(60, 20)) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
+            await pilot.pause()
+            assert not app.query_one(appmod.Sidebar).display
+            await pilot.press("alt+1")
+            await pilot.pause()
+            assert isinstance(app.screen, appmod.PickScreen)
+            assert not isinstance(app.screen, appmod.CommandScreen)
+            ids = [oid for oid, _ in app.screen._options]
+            assert ids == [name for _, name, _ in appmod.SIDEBAR_VIEWS] + ["notes"]
+            assert app.screen._options[-1][1].plain == "8 Notes"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.view == "all"
+            assert app.query_one(appmod.TaskList).has_focus
+    asyncio.run(go())
+
+
 def test_narrow_inspector_receives_focus_and_returns_to_tasks(keyboard_vault):
     async def go():
         app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")

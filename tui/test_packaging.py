@@ -57,12 +57,20 @@ def test_runtime_build_includes_required_modules_and_excludes_tests():
                       and any(isinstance(target, ast.Name) and target.id == "RUNTIME_MODULES"
                               for target in node.targets))
     runtime = ast.literal_eval(assignment.value)
-    assert {"__init__", "__main__", "app", "vaults", "settings", "vault_screen",
-            "notes", "notes_ui", "notes_actions", "note_files", "note_templates", "notes_dialogs",
-            "cli", "git_sync", "terminal", "recurrence"} <= runtime
+    excluded = {"check", "visual_check", "conftest"}
+    expected = {path.stem for path in (ROOT / "tui").glob("*.py")
+                if not path.stem.startswith("test_") and path.stem not in excluded}
+    assert runtime == expected
     assert all(not module.startswith("test_") for module in runtime)
-    assert "visual_check" not in runtime and "check" not in runtime
     assert all((ROOT / "tui" / f"{module}.py").is_file() for module in runtime)
+
+
+def test_readme_mentions_current_version():
+    from tui import __version__
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"taskman-{__version__}-windows-x64.zip" in text
+    assert f"taskman-{__version__}-source.zip" in text
+    assert f"releases/tag/v{__version__}" in text
 
 
 @pytest.mark.parametrize("system,os_name", [("Windows", "nt"), ("Linux", "posix"),

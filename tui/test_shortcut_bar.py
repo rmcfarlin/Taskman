@@ -7,7 +7,7 @@ from rich.cells import cell_len
 from textual.app import App, ComposeResult
 from textual.widgets import Input, OptionList
 
-from tui.shortcut_bar import ShortcutBar, TASK_SHORTCUTS
+from tui.shortcut_bar import NOTES_SHORTCUTS, ShortcutBar, TASK_SHORTCUTS
 
 
 class DockApp(App):
@@ -115,6 +115,30 @@ def test_history_disabled_actions_stay_visible_and_do_not_invoke():
             assert "Undo" in "\n".join(_visible_text(dock))
             assert "Redo" in "\n".join(_visible_text(dock))
             assert app.invocations == []
+    asyncio.run(go())
+
+
+def test_hidden_shortcuts_are_those_that_missed_the_two_rows():
+    async def go():
+        app = DockApp()
+        async with app.run_test(size=(80, 26)) as pilot:
+            await pilot.pause()
+            dock = app.query_one(ShortcutBar)
+            hidden = dock.hidden_shortcuts(dock.content_size.width)
+            shown = "\n".join(_visible_text(dock))
+            assert hidden
+            for item in hidden:
+                assert f" {item.key}  {item.label}" not in shown
+            for item in TASK_SHORTCUTS:
+                if item not in hidden:
+                    assert f" {item.key}  {item.label}" in shown
+            assert any(item.action in {"due", "task_tags", "project", "help", "notes"}
+                       for item in hidden)
+            assert dock.size.height <= 2
+            dock.set_mode("notes")
+            await pilot.pause()
+            assert next(item for item in NOTES_SHORTCUTS if item.action == "view_0").label == "All open"
+            assert dock.hidden_shortcuts(400) == ()
     asyncio.run(go())
 
 

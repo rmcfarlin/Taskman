@@ -214,3 +214,13 @@ def test_scan_setup_and_plain_mutations_do_not_follow_windows_junctions(tmp_path
         assert sorted(p.name for p in root.iterdir()) == ["Tasks"]
     finally:
         linked.rmdir()
+
+
+@pytest.mark.parametrize("name", ["CON", "con.txt", "COM1", "LPT9", "CONIN$", "COM¹"])
+def test_reserved_windows_names_are_shared(name):
+    assert vaults.is_reserved_windows_name(name)
+
+
+@pytest.mark.parametrize("name", ["COM10", "Console", "Notes", "Meeting.md"])
+def test_ordinary_names_are_not_reserved(name):
+    assert not vaults.is_reserved_windows_name(name)

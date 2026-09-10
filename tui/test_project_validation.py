@@ -13,7 +13,7 @@ from tui.app import AddScreen, ProjectScreen, TaskApp, validate_project_name
 @pytest.mark.parametrize("raw", ["", ".", "...", "#project/", "Work/../Outside",
                                       "../Outside", "/Outside", "C:/Outside", "C:Outside",
                                       "\\\\server\\share", "Work\\..\\Outside", "Work//Alpha",
-                                      "CON", "con.txt", "Work/NUL", "Work/LPT1", "COM¹",
+                                      "CON", "con.txt", "Work/NUL", "Work/LPT1", "COM¹", "CONIN$",
                                       "Work./Alpha", "Work/.. /Outside", "Alpha:stream"])
 def test_invalid_project_names_are_rejected(raw):
     with pytest.raises(ValueError):

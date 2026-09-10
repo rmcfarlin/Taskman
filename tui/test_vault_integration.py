@@ -75,6 +75,20 @@ def test_first_launch_shows_welcome_without_scanning_or_mutating_cwd(tmp_path, m
     assert _files(workspace) == before
 
 
+def test_ready_vault_opens_inbox_when_empty(tmp_path, monkeypatch):
+    monkeypatch.delenv("TASKMAN_THEME", raising=False)
+    (tmp_path / "Tasks").mkdir()
+    (tmp_path / "Tasks" / "Inbox.md").write_text("# Inbox\n", encoding="utf-8")
+
+    async def go():
+        app = appmod.TaskApp(tmp_path, theme="taskman-teal")
+        async with app.run_test(notifications=True, size=(110, 28)) as pilot:
+            await pilot.pause()
+            assert app.view == "inbox"
+            assert app.query_one(appmod.TaskList).current is None
+    asyncio.run(go())
+
+
 def test_existing_arbitrary_folder_opens_without_initialization(two_vaults, tmp_path):
     first, _ = two_vaults
     other = tmp_path / "Ordinary notes"
@@ -88,8 +102,8 @@ def test_existing_arbitrary_folder_opens_without_initialization(two_vaults, tmp_
         async with app.run_test(notifications=True, size=(110, 34)) as pilot:
             await _choose(app, pilot, VaultChoice(other, initialize=False))
             assert app.vault == other and app._vault_ready
-            assert app.view == appmod.DEFAULT_VIEW == "now"
-            assert app.query_one(appmod.TaskList).current is None  # An undated task is outside Now.
+            assert app.view == "all"
+            assert app.query_one(appmod.TaskList).current.description == "Follow up with client"
             assert [task.description for task in app.store.tasks] == ["Follow up with client"]
             await pilot.press("1")
             assert app.query_one(appmod.TaskList).current.description == "Follow up with client"
@@ -112,6 +126,7 @@ def test_choice_can_initialize_a_missing_vault_then_add_with_keyboard(two_vaults
         async with app.run_test(notifications=True, size=(110, 34)) as pilot:
             await _choose(app, pilot, VaultChoice(fresh, initialize=True))
             assert app.vault == fresh and app.store.tasks == []
+            assert app.view == "inbox"
             assert (fresh / ".taskman" / "vault.json").is_file()
             assert (fresh / "Tasks" / "Inbox.md").is_file()
             await pilot.press("a")
@@ -145,10 +160,10 @@ def test_switch_resets_search_inspector_and_undo_targets(two_vaults):
             assert app.vault == second and app.store.root == second
             assert app.history is not old_history and not app.history.can_undo and not app.history.can_redo
             assert app.search_query == app.query_one("#search", Input).value == ""
-            assert app.view == appmod.DEFAULT_VIEW and app.project == ""
+            assert app.view == "all" and app.project == ""
             assert not app.query_one(appmod.Inspector).display
             assert app._command_target is None
-            assert app.query_one(appmod.TaskList).current is None  # The new vault also starts in Now.
+            assert app.query_one(appmod.TaskList).current.description == "Different vault task"
             await pilot.press("1")
             assert app.query_one(appmod.TaskList).current.description == "Different vault task"
             assert app._inspected_task is None or app._inspected_task in app.store.tasks

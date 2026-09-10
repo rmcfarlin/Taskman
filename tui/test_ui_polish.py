@@ -32,7 +32,6 @@ async def test_one_row_header_and_status_preserve_room_and_primary_note_actions(
         dock = app.query_one(ShortcutBar)
         assert app.query_one("#topbar").size.height == 1
         assert app.query_one("#statusbar").size.height == 1
-        assert not app.query_one("#contextbar").display
         assert app.query_one("#status-info").display
         assert dock.size.height <= 2
         text = "\n".join(dock.render_line(y).text for y in range(dock.size.height))
@@ -55,7 +54,7 @@ async def test_routine_status_survives_refresh_and_old_timer_at_narrow_width(vau
         await pilot.pause()
         label = app.query_one("#status-info", Label)
         assert label.content.plain == "Second save"
-        assert label.size.width >= 36
+        assert label.display and label.size.width >= 18
         assert not list(app.screen.query("Toast"))
         app._clear_announcement(app._status_generation)
         assert label.content.plain == "Current view after refresh"

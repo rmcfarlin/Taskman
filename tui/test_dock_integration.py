@@ -100,10 +100,8 @@ def test_short_terminal_keeps_task_rows_primary_actions_and_more_visible(dock_va
             await pilot.pause()
             dock = app.query_one(ShortcutBar)
             tasks = app.query_one(appmod.TaskList)
-            context = app.query_one("#contextbar")
             status = app.query_one("#statusbar")
             assert tasks.size.height >= 4
-            assert not context.display
             assert tasks.region.bottom <= status.region.y
             assert status.region.bottom <= dock.region.y
             assert dock.region.bottom == size[1]
@@ -135,6 +133,26 @@ def test_search_dock_tracks_focus_and_escape_restores_full_actions(dock_vault):
             assert " a  Add" in "\n".join(_dock_lines(dock))
             assert "Ctrl+K" in "\n".join(_dock_lines(dock))
             assert not dock._can_undo and not dock._can_redo
+    asyncio.run(go())
+
+
+@pytest.mark.parametrize("size", [(80, 24), (130, 30)])
+def test_status_right_teaches_hidden_dock_keys(dock_vault, size):
+    async def go():
+        app = appmod.TaskApp(dock_vault, theme="taskman-teal")
+        async with app.run_test(notifications=True, size=size) as pilot:
+            await pilot.press("1")  # This workflow exercises the All open view.
+            await pilot.pause()
+            dock = app.query_one(ShortcutBar)
+            hidden = dock.hidden_shortcuts(max(1, dock.content_size.width))
+            right = app.query_one("#status-right")
+            assert hidden
+            assert right.display
+            text = str(right.render())
+            assert text.startswith("also:")
+            assert any(item.label in text for item in hidden
+                       if item.action in {"due", "task_tags", "project", "help", "notes"})
+            assert dock.size.height <= 2
     asyncio.run(go())
 
 

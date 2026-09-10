@@ -3,12 +3,8 @@
 import datetime as dt
 from pathlib import Path
 
-try:
-    from tui import taskman as tm
-    from tui.taskman import Task
-except ImportError:  # running from inside tui/
-    import taskman as tm
-    from taskman import Task
+from tui import cli, taskman as tm
+from tui.taskman import Task
 
 
 def _vault(tmp_path: Path) -> Path:
@@ -373,13 +369,14 @@ def test_sections_completed_by_done_date(tmp_path):
     ]
 
 
-def test_plain_output_marks_overdue_and_sections(tmp_path, capsys):
+def test_plain_output_marks_overdue_and_sections(tmp_path, capsys, monkeypatch):
     root = _tree_vault(tmp_path)
-    assert tm.cmd_plain(root, "all", day=dt.date(2026, 9, 10)) == 0
+    monkeypatch.setattr(tm, "today", lambda day=None: day or dt.date(2026, 9, 10))
+    assert cli.main(["--vault", str(root), "--plain", "all"]) == 0
     out = capsys.readouterr().out
     assert "== Overdue (4) ==" in out and "OVERDUE" in out
     assert "== No due date (1) ==" in out
-    assert tm.cmd_plain(root, "projects") == 0
+    assert cli.main(["--vault", str(root), "--plain", "projects"]) == 0
 
 
 def _note_vault(tmp_path):
@@ -458,9 +455,10 @@ def test_notes_move_and_delete_with_their_task(tmp_path):
     assert text == "# N\n\n\n- [ ] Solo\nProse at column 0 is not a note.\n"
 
 
-def test_plain_prints_notes(tmp_path, capsys):
+def test_plain_prints_notes(tmp_path, capsys, monkeypatch):
     root = _note_vault(tmp_path)
-    tm.cmd_plain(root, "all", day=dt.date(2026, 9, 4))
+    monkeypatch.setattr(tm, "today", lambda day=None: day or dt.date(2026, 9, 4))
+    assert cli.main(["--vault", str(root), "--plain", "all"]) == 0
     out = capsys.readouterr().out
     assert "      First line of the parent note.\n" in out
     assert "        Kid note.\n" in out
