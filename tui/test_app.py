@@ -9,8 +9,22 @@ from textual.widgets._toast import Toast
 
 try:
     from tui import app as appmod
+    from tui import taskman as tm
 except ImportError:  # running from inside tui/
     import app as appmod
+    import taskman as tm
+
+
+def test_opening_view_inbox_all_or_now(tmp_path):
+    (tmp_path / "Tasks").mkdir()
+    inbox = tmp_path / "Tasks" / "Inbox.md"
+    inbox.write_text("", encoding="utf-8")
+    assert appmod._opening_view(tm.Store(tmp_path).refresh()) == "inbox"
+    inbox.write_text("- [ ] Loose end\n", encoding="utf-8")
+    assert appmod._opening_view(tm.Store(tmp_path).refresh(force=True)) == "all"
+    inbox.write_text(f"- [ ] Due today 📅 {dt.date.today().isoformat()}\n", encoding="utf-8")
+    assert appmod._opening_view(tm.Store(tmp_path).refresh(force=True)) == "now"
+    assert appmod.DEFAULT_VIEW == "now"
 
 
 def test_format_due_words():
@@ -327,7 +341,7 @@ def test_inspector_pane_toggles_and_shows_subtasks(tmp_path, monkeypatch):
             kids = insp.query_one("#ins-kids")
             assert [o.id for o in kids.options] == ["k:Tasks/Inbox.md:5", "k:Tasks/Inbox.md:6"]
             assert "1/2" in str(insp.query_one("#ins-subhead").render())
-            assert str(app.query_one("#status-right").render()) == f"{tl.cursor_ordinal}/{tl.task_count}"
+            assert str(app.query_one("#status-right").render()).startswith("also:")
             # Tab first reaches the scrollable inspector, then its child list.
             await pilot.press("tab")
             await pilot.pause()
@@ -338,13 +352,18 @@ def test_inspector_pane_toggles_and_shows_subtasks(tmp_path, monkeypatch):
             await pilot.press("enter")
             await pilot.pause()
             text = (root / "Tasks" / "Inbox.md").read_text(encoding="utf-8")
+            assert "  - [ ] Kid one\n" in text
+            assert kids.has_focus
+            await pilot.press("space")
+            await pilot.pause()
+            text = (root / "Tasks" / "Inbox.md").read_text(encoding="utf-8")
             assert "  - [x] Kid one ✅ " in text
             assert "2/2" in str(insp.query_one("#ins-subhead").render())
-            # Enter on the list toggles the pane closed again; Esc would too.
+            # Esc closes the inspector after the child action.
             await pilot.press("escape")
             await pilot.pause()
             assert not insp.display and tl.has_focus
-            assert str(app.query_one("#status-right").render()) == f"{tl.cursor_ordinal}/{tl.task_count}"
+            assert str(app.query_one("#status-right").render()).startswith("also:")
     _run(go())
 
 
@@ -395,7 +414,9 @@ def test_ctrl_s_confirms_local_autosave_without_executing_vault_scripts(tmp_path
             await pilot.press("ctrl+s")                              # what most terminals send
             await pilot.pause()
             assert (root / task.file).read_bytes() == saved
-            assert "All changes saved to Markdown" in app.query_one("#status-info").render_line(0).text
+            open_count = sum(1 for task in tm.load_all(root) if task.open)
+            assert (f"Rescanned vault · {open_count} open "
+                    f"task{'s' if open_count != 1 else ''}") in app.query_one("#status-info").render_line(0).text
             assert not list(app.screen.query(Toast))
     _run(go())
 

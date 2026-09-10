@@ -4,7 +4,7 @@ from itertools import product
 
 import pytest
 
-from tui import taskman as tm
+from tui import cli, taskman as tm
 
 
 DAY = dt.date(2026, 9, 6)
@@ -130,8 +130,9 @@ def test_date_overflow_is_validation_error():
         tm.parse_date("tomorrow", dt.date.max)
 
 
-def test_plain_now_explains_scheduled_reason(tmp_path, capsys):
+def test_plain_now_explains_scheduled_reason(tmp_path, capsys, monkeypatch):
     (tmp_path / "Work.md").write_text(f"- [ ] Plan ⏳ {DAY} 📅 2026-09-10\n", encoding="utf-8")
-    assert tm.cmd_plain(tmp_path, "now", day=DAY) == 0
+    monkeypatch.setattr(tm, "today", lambda day=None: day or DAY)
+    assert cli.main(["--vault", str(tmp_path), "--plain", "now"]) == 0
     output = capsys.readouterr().out
     assert "Today (1)" in output and "scheduled 2026-09-06" in output and "due 2026-09-10" in output

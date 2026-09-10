@@ -16,12 +16,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-22.04]
+        python-version: ['3.10', '3.13']
+        exclude:
+          # Windows 3.10 Textual pilots time out under CI load; 3.10 stays covered on Linux/macOS.
+          - os: windows-latest
+            python-version: '3.10'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install -e ".[test,build]"
       - name: Verify tag version
@@ -32,9 +37,13 @@ jobs:
           from tui import __version__
           assert os.environ['GITHUB_REF_NAME'] == f'v{__version__}'
       - run: python -m pytest tui -q -p no:cacheprovider
-      - run: python scripts/build_release.py --standalone
-      - run: python scripts/smoke_distribution.py
+      - name: Build and smoke standalone
+        if: matrix.python-version == '3.13'
+        run: |
+          python scripts/build_release.py --standalone
+          python scripts/smoke_distribution.py
       - uses: actions/upload-artifact@v7
+        if: matrix.python-version == '3.13'
         with:
           name: taskman-${{ matrix.os }}
           path: dist/*

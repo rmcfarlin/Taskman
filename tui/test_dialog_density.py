@@ -4,6 +4,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Input, TextArea
 
+from tui import app as appmod
 from tui.note_templates import MEETING_TEMPLATE
 from tui.notes import Note
 from tui.notes_dialogs import TemplateEditorScreen
@@ -26,6 +27,27 @@ def fully_visible(screen, selector):
     shown = geometry.region.intersection(geometry.clip).intersection(screen.region)
     assert shown == geometry.region and shown.area > 0
     return widget
+
+
+class DatesHarness(App):
+    CSS = appmod.TaskApp.CSS
+
+    def on_mount(self):
+        self.push_screen(appmod.DatesScreen())
+
+
+@pytest.mark.parametrize("size", SIZES)
+async def test_dates_dialog_compact_controls(size):
+    app = DatesHarness()
+    async with app.run_test(size=size) as pilot:
+        dialog = app.screen
+        assert isinstance(dialog, appmod.DatesScreen)
+        save = fully_visible(dialog, "#ok")
+        cancel = fully_visible(dialog, "#cancel")
+        assert save.size.height == 1
+        assert cancel.size.height == 1
+        assert "Save" in str(save.label)
+        assert "Cancel" in str(cancel.label)
 
 
 @pytest.mark.parametrize("size", SIZES)

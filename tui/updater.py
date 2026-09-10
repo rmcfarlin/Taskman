@@ -27,6 +27,7 @@ import uuid
 import zipfile
 
 from . import __version__
+from .vaults import is_reserved_windows_name
 
 REPOSITORY = "rmcfarlin/Taskman"
 RELEASES_URL = f"https://github.com/{REPOSITORY}/releases"
@@ -40,7 +41,6 @@ MAX_FILE = 256 * 1024 * 1024
 HELPER_READY_TIMEOUT = 10
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
 _VERSION = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:(?:\.)?(dev|a|b|rc)(\d+))?\Z")
-_RESERVED = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10)), *(f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "¹²³")}
 
 
 class UpdateError(Exception):
@@ -232,7 +232,7 @@ def _member(name: str) -> str:
     parts = name.split("/")
     if any(not part or part in (".", "..") or part[-1:] in (" ", ".") or
            any(ord(ch) < 32 or ch in '<>:"|?*' for ch in part) or
-           part.split(".")[0].upper() in _RESERVED for part in parts):
+           is_reserved_windows_name(part) for part in parts):
         raise UpdateError("The update contains an unsafe filename.")
     return PurePosixPath(*parts).as_posix()
 

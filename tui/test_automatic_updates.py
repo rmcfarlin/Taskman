@@ -1,5 +1,6 @@
 """Background discovery respects drafts, consent, and manual update checks."""
 import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -56,6 +57,7 @@ def test_startup_registers_six_hour_checks_once_and_skips_headless():
     app._start_automatic_updates()
     app._start_automatic_updates()
     assert app.checks == 1
+    assert app._automatic_updates_started_at > 0
     assert [interval for interval, _ in app.intervals] == [6 * 60 * 60, 2]
 
 
@@ -91,6 +93,41 @@ async def test_current_or_offline_discovery_is_quiet(app, monkeypatch, offline):
         assert app._pending_update is None
         assert not app._automatic_update_inflight
         assert not isinstance(app.screen, UpdateScreen)
+
+
+@pytest.mark.asyncio
+async def test_automatic_offer_waits_fifteen_seconds_manual_check_does_not(app, release):
+    support = updater.InstallSupport(True, "", app.vault / "app")
+    async with app.run_test(size=(90, 26)) as pilot:
+        app._automatic_updates_started = True
+        app._automatic_updates_started_at = time.monotonic()
+        app._pending_update = (release, support)
+        app._offer_pending_update()
+        await pilot.pause()
+        assert not isinstance(app.screen, UpdateScreen)
+        app._automatic_updates_started_at = time.monotonic() - 14.9
+        app._offer_pending_update()
+        await pilot.pause()
+        assert not isinstance(app.screen, UpdateScreen)
+        app.action_check_updates()
+        await pilot.pause()
+        assert isinstance(app.screen, UpdateScreen)
+        assert app.screen.release == release
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_automatic_offer_proceeds_after_fifteen_seconds(app, release):
+    support = updater.InstallSupport(True, "", app.vault / "app")
+    async with app.run_test(size=(90, 26)) as pilot:
+        app._automatic_updates_started = True
+        app._automatic_updates_started_at = time.monotonic() - 15.0
+        app._pending_update = (release, support)
+        app._offer_pending_update()
+        await pilot.pause()
+        assert isinstance(app.screen, UpdateScreen)
+        assert app.screen.release == release
+        await pilot.press("escape")
 
 
 @pytest.mark.asyncio

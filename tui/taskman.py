@@ -16,7 +16,7 @@ under its line — Obsidian shows it as the item's paragraph:
 
 This module deliberately has ZERO third-party dependencies so it stays fast,
 testable, and easy to edit. The Textual UI in app.py imports from here; the
-``--plain`` CLI below works with stock Python (screen-reader / pipe friendly).
+``--plain`` CLI in cli.py works with stock Python (screen-reader / pipe friendly).
 
 Sections:
   1. Constants (priorities, emoji, views)
@@ -25,9 +25,9 @@ Sections:
   4. Vault scan   (iter_markdown_files, parse_file, load_all)
   5. Views/filters (inbox, today, overdue, next7, ...)
   6. Mutations    (toggle, set_due, set_priority, set_project, set_note, edit, delete, add, ...)
-  7. Plain CLI    (``python -m tui --plain today``)
-  8. Hierarchy    (depth/parent, children, subtree ops)
-  9. Layout       (tree_rows + sections: what the TUI draws, unit-testable)
+  7. Hierarchy    (depth/parent, children, subtree ops)
+  8. Layout       (tree_rows + sections: what the TUI draws, unit-testable)
+  9. Entry        (main forwards to cli.main; _utf8_stdout for pipes)
 
 Projects: a task belongs to a project via a ``#project/Name`` tag, or by
 living in ``Projects/Name.md`` (same rule Task Genius uses). ``set_project``
@@ -36,7 +36,6 @@ swaps the tag; ``ensure_project_file`` gives a new project its note.
 
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import os
 import re
@@ -197,6 +196,8 @@ def _remove_task_tags(text: str) -> str:
     return text
 
 # Folders never scanned (plugin code, history, templates with placeholder boxes).
+# "tui" is excluded so opening this repository as a vault does not treat the
+# package source tree as task Markdown.
 EXCLUDE_DIRS = {
     ".obsidian", ".git", ".taskman", "docs", "scripts", "Templates", "tui",
     "__pycache__", "node_modules", "vendor", "venv", ".venv", "env",
@@ -749,7 +750,7 @@ def view_tasks(tasks: Iterable[Task], view: str,
             if want not in tags and f"project/{want}" not in tags and want not in stems:
                 continue
         elif view not in ("inbox", "now", "overdue", "next7", "all",
-                          "completed", "priority", "project", "search", "alltasks"):
+                          "completed", "priority", "project", "search"):
             raise ValueError(f"unknown view: {view!r}")
         if q and q not in f"{t.description} {t.file} {' '.join(t.tags)}".casefold():
             continue
@@ -1928,29 +1929,6 @@ def link_note(root: "str | Path", t: Task, title: str) -> "Task | None":
         return edit_text(Path(root), t, f"{current.description} [[{title}]]".strip())
 
 
-# ---------------------------------------------------------------------------
-# 7. Plain CLI — accessible without the TUI (pipes, screen readers, tests)
-# ---------------------------------------------------------------------------
-
-def cmd_plain(root: Path, view: str, project: str = "", query: str = "",
-              day: "dt.date | None" = None) -> int:
-    tasks = load_all(root)
-    day = today(day)
-    if view == "projects":
-        counts_by = project_counts(tasks)
-        for name in project_names(tasks, root):
-            print(f"{name}  ({counts_by.get(name.casefold(), 0)} open)")
-        return 0
-    rows = view_tasks(tasks, view, day, project, query)
-    for sec in sections(rows, view, day):
-        print(f"== {sec.title} ({sec.count}) ==")
-        for node in sec.nodes:
-            print(node.task.short(day))
-            for line in node.task.note.splitlines():   # notes ride along, indented
-                print("  " * node.task.depth + "      " + line)
-    return 0
-
-
 def _utf8_stdout() -> None:
     """Never crash on emoji: pipes/files get UTF-8, consoles keep theirs but
     substitute unencodable characters (Windows cp1252 would otherwise die)."""
@@ -1966,10 +1944,7 @@ def _utf8_stdout() -> None:
 
 def main(argv: "list[str] | None" = None) -> int:
     """Run the shared dependency-free command interface."""
-    if __package__:
-        from .cli import main as command_main
-    else:
-        from cli import main as command_main
+    from .cli import main as command_main
     return command_main(argv)
 
 

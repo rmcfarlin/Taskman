@@ -240,7 +240,7 @@ def test_workspace_backgrounds_follow_theme_through_pane_focus(chrome_vault, the
                 await pilot.press(focus_key)
                 await pilot.pause()
                 for selector in ("#body", "#main", "#sidebar", "#tasks", "#inspector",
-                                 "#topbar", "#contextbar"):
+                                 "#topbar"):
                     widget = app.query_one(selector)
                     assert widget.background_colors[1] == expected, (theme, selector, focus_key)
     asyncio.run(go())

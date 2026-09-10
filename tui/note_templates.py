@@ -11,11 +11,10 @@ import stat
 import tempfile
 
 from .taskman import vault_write_lock
-from .vaults import normalize_folder, vault_path
+from .vaults import is_reserved_windows_name, normalize_folder, vault_path
 
 
 TEMPLATE_DIR = ".taskman/templates/notes"
-_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", re.I)
 
 
 class TemplateConflict(ValueError):
@@ -51,7 +50,7 @@ def _path(root: Path, file: str) -> Path:
         raise ValueError("Template file must be a vault-relative Markdown path")
     relative = Path(file.replace("\\", "/"))
     if (relative.parent.as_posix() != TEMPLATE_DIR or relative.suffix.casefold() != ".md"
-            or _RESERVED.match(relative.name)
+            or is_reserved_windows_name(relative.name)
             or re.search(r'[<>:"|?*\x00-\x1f]', relative.name)):
         raise ValueError(f"Templates must be portable Markdown files directly inside {TEMPLATE_DIR}/")
     return vault_path(root, relative)

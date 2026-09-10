@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from textual import work
 from textual.screen import ModalScreen
@@ -16,6 +17,7 @@ class UpdateActions:
 
     def _init_update_state(self) -> None:
         self._automatic_updates_started = False
+        self._automatic_updates_started_at = 0.0
         self._automatic_update_inflight = False
         self._automatic_update_generation = 0
         self._automatic_update_manual = False
@@ -29,6 +31,7 @@ class UpdateActions:
         if self.is_headless or self._automatic_updates_started:
             return
         self._automatic_updates_started = True
+        self._automatic_updates_started_at = time.monotonic()
         self.set_interval(self.UPDATE_CHECK_INTERVAL, self._check_automatic_updates)
         self.set_interval(2, self._offer_pending_update)
         self._check_automatic_updates()
@@ -94,7 +97,9 @@ class UpdateActions:
                 or self._active_update_screen is not None
                 or isinstance(self.screen, ModalScreen)
                 or self._opening_vault or self._pushing_vault
-                or isinstance(self.focused, (Input, TextArea))):
+                or isinstance(self.focused, (Input, TextArea))
+                or (self._automatic_updates_started
+                    and time.monotonic() - self._automatic_updates_started_at < 15)):
             return
         release, support = self._pending_update
         self._pending_update = None

@@ -16,7 +16,7 @@ import stat
 import tempfile
 from typing import Iterable
 
-from .vaults import is_linked, normalize_folder, vault_path
+from .vaults import is_linked, is_reserved_windows_name, normalize_folder, vault_path
 
 
 class NoteConflict(RuntimeError):
@@ -58,7 +58,6 @@ class _Document:
 _DEFAULT = object()
 _MARKER = "<!-- taskman-note"
 _COMMENT = re.compile(r"\A\s*<!-- taskman-note:\s*(.*?)-->", re.DOTALL)
-_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", re.I)
 
 
 def _line(value: str, label: str, default: str = "") -> str:
@@ -201,7 +200,7 @@ class NotesStore:
         relative = Path(os.fspath(file).replace("\\", "/"))
         if len(relative.parts) < 2 or relative.parts[0] != "Notes" or relative.suffix.casefold() != ".md":
             raise ValueError("Notes must be Markdown files inside Notes/")
-        if any(_RESERVED.match(part) or re.search(r'[<>:"|?*\x00-\x1f]', part)
+        if any(is_reserved_windows_name(part) or re.search(r'[<>:"|?*\x00-\x1f]', part)
                for part in relative.parts[1:]):
             raise ValueError("Use a portable note path without reserved names or characters")
         return vault_path(self.root, file)
@@ -251,7 +250,7 @@ class NotesStore:
     def new_path(self, title: str) -> str:
         title = _line(title, "Title")
         name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", title).strip(" .")[:100].rstrip(" .") or "Note"
-        if _RESERVED.match(name):
+        if is_reserved_windows_name(name):
             name = "_" + name
         folder = vault_path(self.root, "Notes")
         existing = {path.name.casefold() for path in folder.iterdir()} if folder.exists() else set()

@@ -6,7 +6,7 @@ A keyboard-first task and notes manager for folders of Markdown files. Open a fo
 
 ## Download and run
 
-**Windows:** download the `taskman-3.2.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.2.0), extract the entire archive, and run:
+**Windows:** download the `taskman-3.3.1-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.3.1), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-3.2.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-3.3.1-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 

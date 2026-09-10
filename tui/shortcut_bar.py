@@ -51,7 +51,7 @@ TASK_SHORTCUTS = (
     Shortcut("u", "Undo", "undo"),
     Shortcut("Ctrl+Y", "Redo", "redo"),
     Shortcut("r", "Rescan", "refresh"),
-    Shortcut("Ctrl+S", "Save", "save"),
+    Shortcut("Ctrl+S", "Rescan", "save"),
     Shortcut("Ctrl+O", "Vault", "open_vault"),
     Shortcut("m", "Theme", "theme"),
     Shortcut("h", "Help", "help"),
@@ -88,7 +88,7 @@ NOTES_SHORTCUTS = (
     Shortcut("u", "Undo", "undo"),
     Shortcut("Ctrl+Y", "Redo", "redo"),
     Shortcut("r", "Rescan", "refresh"),
-    Shortcut("1", "Tasks", "view_0"),
+    Shortcut("1", "All open", "view_0"),
     Shortcut("Ctrl+K", "More", "commands"),
 )
 
@@ -202,6 +202,10 @@ class ShortcutBar(Widget, can_focus=False, can_focus_children=False):
             rows[-1].append(shortcut)
             used += gap + shortcut.width
         return rows
+
+    def hidden_shortcuts(self, width: int) -> tuple[Shortcut, ...]:
+        shown = {item for row in self._rows(max(1, width)) for item in row}
+        return tuple(item for item in self.shortcuts if item not in shown)
 
     def _rows(self, width: int) -> list[list[Shortcut]]:
         shortcuts = self.shortcuts

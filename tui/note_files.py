@@ -14,12 +14,11 @@ from urllib.parse import quote, unquote, urlsplit
 
 from .notes import Note, NoteConflict, NotesStore
 from .taskman import vault_write_lock
-from .vaults import is_linked, vault_path
+from .vaults import is_linked, is_reserved_windows_name, vault_path
 
 
 _TECHNICAL = {"node_modules", "vendor", "venv", "env", "__pycache__", "dist", "build",
               "artifacts", "target", "bin", "obj", "site-packages", "coverage", "htmlcov"}
-_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", re.I)
 _WIKI = re.compile(r"\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]")
 _REFERENCE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:\s*(?:<([^>\n]+)>|([^\s]+))")
 _HTML = re.compile(r"<\s*[A-Za-z](?:[^'\">]|\"[^\"]*\"|'[^']*')*>")
@@ -79,7 +78,7 @@ def _destination(store: NotesStore, old: str, new_name: str) -> str:
         raise ValueError("Enter a filename without leading or trailing spaces")
     if any(ord(char) < 32 or ord(char) == 127 or char in '<>:"/\\|?*\x85\u2028\u2029' for char in new_name):
         raise ValueError("Use a filename, without folders or reserved filename characters")
-    if new_name.endswith((".", " ")) or _RESERVED.match(new_name):
+    if new_name.endswith((".", " ")) or is_reserved_windows_name(new_name):
         raise ValueError("This filename is reserved or ends with a dot or space")
     if not new_name.casefold().endswith(".md"):
         new_name += ".md"

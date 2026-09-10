@@ -358,7 +358,7 @@ def _native_console_probe(folder: Path, executable: Path | None) -> int:
 
             wait_until(lambda: "Taskman" in screen() and "Raw keyboard test" in screen(), "app ready")
             press("\x13", 0x08, 0x53)
-            wait_until(lambda: "All changes saved to Markdown" in screen(), "plain Ctrl+S acknowledgement")
+            wait_until(lambda: "Rescanned vault" in screen(), "plain Ctrl+S acknowledgement")
             remote_refs = _git(remote, "for-each-ref", "--format=%(refname)", "refs/heads")
             assert not remote_refs and _git(vault, "rev-parse", "HEAD") == original_head
             report["ctrl_s_did_not_push"] = True

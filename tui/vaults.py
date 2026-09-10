@@ -14,6 +14,19 @@ VAULT_FILES = {
     ".taskman/vault.json": json.dumps({"format_version": 1, "scan": "recursive"}, indent=2) + "\n",
 }
 
+# Windows device names that cannot be file or folder segments (incl. CONIN$/superscripts).
+_RESERVED_WINDOWS = frozenset({
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+    *(f"{prefix}{digit}" for prefix in ("COM", "LPT") for digit in "¹²³"),
+})
+
+
+def is_reserved_windows_name(part: str) -> bool:
+    """True when a path segment's stem is a reserved Windows device name."""
+    return part.partition(".")[0].upper() in _RESERVED_WINDOWS
+
 
 def is_linked(path: Path) -> bool:
     """Detect links without resolving them, including Windows junctions."""
