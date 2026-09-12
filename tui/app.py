@@ -160,10 +160,12 @@ def _fg_only(style: Style) -> Style:
 # ---------------------------------------------------------------------------
 # Themes — dark themes: five of one family (a single hue carries the
 # structure; white carries the words; warm colors only carry meaning) plus
-# Darcula and One Dark ports, then Light and a true High contrast theme for
-# low vision (the promise NO_COLOR makes). `m` opens a live-preview picker;
-# the choice persists in the user's Taskman settings.
-# --theme NAME / $TASKMAN_THEME override it for a session.
+# editor ports (Darcula, One Dark, Dark Teal, Kanagawa, Gruvbox Dark,
+# Catppuccin Mocha, Nord) and an amber Phosphor CRT; then Light, Gruvbox
+# Light, and Catppuccin Latte, and a true High contrast theme for low
+# vision (the promise NO_COLOR makes). `m` opens a live-preview picker; the
+# choice persists in the user's Taskman settings. --theme NAME /
+# $TASKMAN_THEME override it for a session.
 # ---------------------------------------------------------------------------
 
 def _family(name: str, *, primary: str, secondary: str, accent: str, foreground: str,
@@ -248,42 +250,133 @@ DARK_THEMES: tuple[tuple[Theme, str], ...] = (
              muted="#9aa5a6", primary_muted="#3d7375", border="#3a5a5b", cursor_text="#ffffff",
              text_primary="#7fcbc6"),
      "Dark Teal"),
+    # rebelot/kanagawa.nvim Wave: sumi ink, fujiWhite, crystalBlue selection,
+    # oniViolet keywords, waveRed / springGreen / roninYellow semantics.
+    (_family("taskman-kanagawa", primary="#7e9cd8", secondary="#7fb4ca", accent="#957fb8",
+             foreground="#dcd7ba", background="#16161d", surface="#1f1f28", panel="#2a2a37",
+             warning="#ff9e3b", error="#e46876", success="#98bb6c",
+             muted="#727169", primary_muted="#2d4f67", border="#54546d", cursor_text="#1f1f28"),
+     "Kanagawa"),
+    # morhetz/gruvbox Dark: bg0 surfaces, fuji cream text. The light
+    # theme's structure blue flips to faded blue #83a598, orange is the
+    # accent, and the bright yellow/red/green carry meaning.
+    (_family("taskman-gruvbox-dark", primary="#83a598", secondary="#a8c5b8", accent="#fe8019",
+             foreground="#ebdbb2", background="#282828", surface="#32302f", panel="#3c3836",
+             warning="#fabd2f", error="#fb4934", success="#b8bb26",
+             muted="#a89984", primary_muted="#665c54", border="#504945", cursor_text="#282828"),
+     "Gruvbox Dark"),
+    # Catppuccin Mocha: mantle/base/surface0 layering, mauve structure,
+    # sky accents, and the red/pink-green-yellow semantic set.
+    (_family("taskman-catppuccin-mocha", primary="#cba6f7", secondary="#89b4fa", accent="#89dceb",
+             foreground="#cdd6f4", background="#181825", surface="#1e1e2e", panel="#313244",
+             warning="#f9e2af", error="#f38ba8", success="#a6e3a1",
+             muted="#7f849c", primary_muted="#585b70", border="#45475a", cursor_text="#1e1e2e"),
+     "Catppuccin Mocha"),
+    # Nord: polar-night surfaces, frost structure, aurora semantics. The
+    # primary is too dark to read as text, so text-primary is the frost
+    # blue (upcoming dates, in-progress glyphs).
+    (_family("taskman-nord", primary="#5e81ac", secondary="#81a1c1", accent="#88c0d0",
+             foreground="#d8dee9", background="#2e3440", surface="#3b4252", panel="#434c5e",
+             warning="#ebcb8b", error="#bf616a", success="#a3be8c",
+             muted="#7b88a1", primary_muted="#4c566a", border="#434c5e", cursor_text="#eceff4",
+             text_primary="#88c0d0"),
+     "Nord"),
+    # Amber phosphor CRT: P3 #ffb000 on near-black glass. Chrome stays
+    # amber; warning/error/success keep red/orange/green so meaning
+    # survives the monochrome palette.
+    (_family("taskman-phosphor", primary="#ffb000", secondary="#cc8800", accent="#ffe3a1",
+             foreground="#ecc57f", background="#0d0b06", surface="#16120a", panel="#211a0f",
+             warning="#ff9d2e", error="#ff6b6b", success="#8fd97f",
+             muted="#b08d5c", primary_muted="#6b4e12", border="#4a3718", cursor_text="#1a1206"),
+     "Phosphor"),
 )
 
-LIGHT_THEME = _family(
-    "taskman-light", dark=False, primary="#176b68", secondary="#356f70", accent="#075e5b",
-    foreground="#172d31", background="#f6f5ef", surface="#eeeee5", panel="#e0e9e4",
-    warning="#865800", error="#ad2635", success="#246f42", muted="#516469",
-    primary_muted="#adc7c1", border="#96b5af", cursor_text="#ffffff", text_primary="#125e5b",
+
+def _light_text(theme: Theme, *, disabled: str) -> Theme:
+    """Pin semantic text colors so light-theme blends don't wash out dates."""
+    theme.variables.update({
+        "text-warning": theme.warning,
+        "text-error": theme.error,
+        "text-success": theme.success,
+        "text-accent": theme.accent,
+        "text-disabled": disabled,
+    })
+    return theme
+
+
+LIGHT_THEMES: tuple[tuple[Theme, str], ...] = (
+    (_light_text(
+        _family("taskman-light", dark=False, primary="#176b68", secondary="#356f70",
+                accent="#075e5b", foreground="#172d31", background="#f6f5ef",
+                surface="#eeeee5", panel="#e0e9e4", warning="#865800", error="#ad2635",
+                success="#246f42", muted="#516469", primary_muted="#adc7c1",
+                border="#96b5af", cursor_text="#ffffff", text_primary="#125e5b"),
+        disabled="#68767a"),
+     "Light"),
+    # morhetz/gruvbox Light: cream paper, warm ink, faded blue structure.
+    # Official faded yellow/green/orange are darkened just enough for AA
+    # text contrast on light0 / light0_soft / light1.
+    (_light_text(
+        _family("taskman-gruvbox-light", dark=False, primary="#076678", secondary="#396b4c",
+                accent="#9a3203", foreground="#3c3836", background="#fbf1c7",
+                surface="#f2e5bc", panel="#ebdbb2", warning="#85570e", error="#9d0006",
+                success="#68630c", muted="#5a524c", primary_muted="#d5c4a1",
+                border="#bdae93", cursor_text="#fbf1c7", text_primary="#076678"),
+        disabled="#665c54"),
+     "Gruvbox Light"),
+    # Catppuccin Latte: base/mantle/crust paper with the Latte blue
+    # structure. Yellow/red/green are darkened like Gruvbox Light to
+    # keep AA text contrast on the paper backgrounds.
+    (_light_text(
+        _family("taskman-catppuccin-latte", dark=False, primary="#1e66f5", secondary="#7287fd",
+                accent="#8839ef", foreground="#4c4f69", background="#eff1f5",
+                surface="#e6e9ef", panel="#dce0e8", warning="#855700", error="#bd1035",
+                success="#2b6e1f", muted="#5c5f77", primary_muted="#bcc0cc",
+                border="#bcc0cc", cursor_text="#ffffff", text_primary="#1c55d6"),
+        disabled="#8c8fa1"),
+     "Catppuccin Latte"),
 )
-# Explicit semantic text colors avoid light-theme blends that wash out dates.
-LIGHT_THEME.variables.update({
-    "text-warning": "#865800", "text-error": "#ad2635", "text-success": "#246f42",
-    "text-accent": "#075e5b", "text-disabled": "#68767a",
-})
+LIGHT_THEME = LIGHT_THEMES[0][0]
 
 # (theme_name, friendly_label, is_dark). Order = picker order.
 THEMES: tuple[tuple[str, str, bool], ...] = tuple(
     (theme.name, label, True) for theme, label in DARK_THEMES
+) + tuple(
+    (theme.name, label, False) for theme, label in LIGHT_THEMES
 ) + (
-    ("taskman-light", "Light", False),
     ("high-contrast", "High contrast", True),
 )
 DEFAULT_THEME = "taskman-dark-teal"
-THEME_ALIASES = {"taskman-rcm": "taskman-dark-teal", "catppuccin-latte": "taskman-light"}
+THEME_ALIASES = {
+    "taskman-rcm": "taskman-dark-teal",
+    "catppuccin-latte": "taskman-catppuccin-latte",
+    "catppuccin-mocha": "taskman-catppuccin-mocha",
+    "gruvbox-dark": "taskman-gruvbox-dark",
+    "gruvbox-light": "taskman-gruvbox-light",
+    "kanagawa": "taskman-kanagawa",
+    "nord": "taskman-nord",
+}
 HIGH_CONTRAST = "high-contrast"
+
+
+def _curated_theme(name: str) -> Theme | None:
+    name = THEME_ALIASES.get(name, name)
+    for group in (DARK_THEMES, LIGHT_THEMES):
+        found = next((theme for theme, _ in group if theme.name == name), None)
+        if found is not None:
+            return found
+    if name == HIGH_CONTRAST:
+        return high_contrast_theme()
+    return None
 
 
 def theme_swatch(name: str) -> Text:
     """Four color blocks — primary, accent, warning, error — for the picker,
     so you can see a theme before you try it."""
     from textual.theme import BUILTIN_THEMES
-    name = THEME_ALIASES.get(name, name)
-    theme = LIGHT_THEME if name == LIGHT_THEME.name else next((t for t, _ in DARK_THEMES if t.name == name), None)
-    if theme is None and name == HIGH_CONTRAST:
-        theme = high_contrast_theme()
+    theme = _curated_theme(name)
     if theme is None:
-        theme = BUILTIN_THEMES.get(name)
+        theme = BUILTIN_THEMES.get(THEME_ALIASES.get(name, name))
     out = Text(no_wrap=True)
     if theme is None:
         return out.append("    ")
@@ -441,6 +534,7 @@ class TaskRow:
     progress: tuple[int, int]   # (closed direct children, total children)
     context: bool = False       # ancestor shown only for its matching children
                                 # (snapshot: Task.context is reset by every view_tasks call)
+    folded: bool | None = None  # None = leaf; True = collapsed; False = expanded
 
 
 Row = Union[HeaderRow, TaskRow]
@@ -475,6 +569,7 @@ class TaskList(ScrollView, can_focus=True):
         & > .tasklist--header { color: $text-muted; text-style: bold; }
         & > .tasklist--rule { color: $foreground 15%; }
         & > .tasklist--guide { color: $foreground 35%; }
+        & > .tasklist--fold { color: $text-muted; }
         & > .tasklist--desc { color: $foreground; }
         & > .tasklist--done { color: $text-muted; }
         & > .tasklist--context { color: $text-muted; text-style: italic; }
@@ -511,7 +606,7 @@ class TaskList(ScrollView, can_focus=True):
 
     COMPONENT_CLASSES = {
         "tasklist--cursor", "tasklist--colhead", "tasklist--header",
-        "tasklist--rule", "tasklist--guide", "tasklist--desc", "tasklist--done",
+        "tasklist--rule", "tasklist--guide", "tasklist--fold", "tasklist--desc", "tasklist--done",
         "tasklist--context", "tasklist--progress", "tasklist--tag",
         "tasklist--project", "tasklist--muted", "tasklist--empty",
         "tasklist--overdue", "tasklist--today", "tasklist--soon", "tasklist--later",
@@ -533,8 +628,9 @@ class TaskList(ScrollView, can_focus=True):
         Binding("home", "cursor_first", "First", show=False),
         Binding("end", "cursor_last", "Last", show=False),
         Binding("enter", "select", "Open", show=False),
-        Binding("right", "app.focus_inspector", "Details", show=False),
-        Binding("left", "app.focus_sidebar", "Views", show=False),
+        Binding("right", "fold_or_inspector", "Expand / details", show=False),
+        Binding("left", "fold_or_sidebar", "Collapse / views", show=False),
+        Binding("minus", "app.toggle_fold", "Fold subtasks", show=False),
     ]
 
     HEADER_LINES = 1   # the fixed column header at the top
@@ -675,15 +771,47 @@ class TaskList(ScrollView, can_focus=True):
         if t is not None:
             self.post_message(self.Selected(t))
 
+    def _cursor_row(self) -> TaskRow | None:
+        if 0 <= self.cursor < len(self.rows):
+            row = self.rows[self.cursor]
+            if isinstance(row, TaskRow):
+                return row
+        return None
+
+    def action_fold_or_inspector(self) -> None:
+        row = self._cursor_row()
+        if row is not None and row.folded is True:
+            self.app.action_expand_fold()
+            return
+        self.app.action_focus_inspector()
+
+    def action_fold_or_sidebar(self) -> None:
+        row = self._cursor_row()
+        if row is not None and row.folded is False:
+            self.app.action_collapse_fold()
+            return
+        self.app.action_focus_sidebar()
+
+    def _fold_marker_at(self, row: TaskRow, x: int) -> bool:
+        """True when a click at content column ``x`` lands on the fold marker."""
+        if row.folded is None:
+            return False
+        start = 9 + cell_len(row.prefix)   # status + PRIO columns, then guides
+        return start <= x < start + 2
+
     def on_click(self, event: events.Click) -> None:
         offset = event.get_content_offset(self)
         if offset is None or offset.y < self.HEADER_LINES:
             return
         idx = offset.y - self.HEADER_LINES + self.scroll_offset.y
         if 0 <= idx < len(self.rows) and isinstance(self.rows[idx], TaskRow):
+            row = self.rows[idx]
             if idx != self.cursor:
                 self.cursor = idx
                 self._cursor_moved()
+            if self._fold_marker_at(row, offset.x + self.scroll_offset.x):
+                self.app.action_toggle_fold()
+                return
             if event.chain >= 2:
                 self.action_select()
 
@@ -864,6 +992,8 @@ class TaskList(ScrollView, can_focus=True):
         cell = Text(no_wrap=True)
         if row.prefix:
             cell.append(row.prefix, self._style("guide"))
+        if row.folded is not None:
+            cell.append("▸ " if row.folded else "▾ ", self._style("fold"))
         if t.closed:
             dstyle = self._style("done")
         elif row.context:
@@ -1991,6 +2121,7 @@ class HelpScreen(ModalScreen[None]):
             ("g", "Tags — add or remove task tags, including person/alex"),
             ("Ctrl+G", "Filter by tag across views and projects; Esc clears after Find"),
             ("]  /  [", "indent under the previous task  /  outdent"),
+            ("-  or  ← / →", "collapse or expand subtasks (←/→ also move panes when there is nothing to fold)"),
             ("Delete", "delete the task, its note and its sub-tasks (asks first)"),
             ("o", "Open the note in your editor"),
         )),
@@ -2016,7 +2147,7 @@ class HelpScreen(ModalScreen[None]):
             ("Ctrl+O", "Open Vault — browse folders, recent vaults, or set up a new folder"),
             ("Ctrl+S", "Rescan the vault from disk (edits already save immediately)"),
             ("Ctrl+Shift+S", "Commit and push this vault to its existing Git remote"),
-            ("m", "theMe — Teal · Ocean · Ember · Iris · Moss · Darcula · One Dark · Dark Teal (+ Light, High contrast)"),
+            ("m", "theMe — 13 dark, 3 light, and High contrast themes; ↑↓ previews live"),
             ("h", "Help — this screen"),
             ("q", "Quit"),
         )),
@@ -2216,6 +2347,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         Binding("r", "refresh", "Rescan", show=False),
         Binding("right_square_bracket", "indent", "Indent", show=False),
         Binding("left_square_bracket", "outdent", "Outdent", show=False),
+        Binding("minus", "toggle_fold", "Fold subtasks", show=False),
         Binding("delete", "delete", "Delete", show=False),
         Binding("escape", "escape", "Clear search / close inspector", show=False),
         Binding("1", "view_0", show=False), Binding("2", "view_1", show=False),
@@ -2258,15 +2390,16 @@ class TaskApp(UpdateActions, NotesActions, App):
         self.search_query = ""
         self.task_tag = ""
         self._context_ids: set[str] = set()
+        self._collapsed: set[str] = set()
         self._summary = ""
         self._sidebar_hidden = False
         self._status_info: str | Text = ""
         self._status_generation = 0
         self._status_message_active = False
         self._status_timer = None
-        for dark_theme, _label in DARK_THEMES:
-            self.register_theme(dark_theme)
-        self.register_theme(LIGHT_THEME)
+        for group in (DARK_THEMES, LIGHT_THEMES):
+            for curated, _label in group:
+                self.register_theme(curated)
         self.register_theme(high_contrast_theme())
         self.theme_name = resolve_theme(theme)
         self.theme = self.theme_name
@@ -2296,7 +2429,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         if action in {"find_in_note", "rename_reference", "delete_reference", "note_sort"}:
             if self.view != "notes":
                 return False
-        if action in {"delete", "delete_reference", "rename_reference", "note_sort"} and isinstance(self.focused, (Input, TextArea)):
+        if action in {"delete", "delete_reference", "rename_reference", "note_sort", "toggle_fold"} and isinstance(self.focused, (Input, TextArea)):
             return False
         return True
 
@@ -2486,6 +2619,7 @@ class TaskApp(UpdateActions, NotesActions, App):
         self._command_target = self._inspected_task = None
         self._last_main_id = None
         self._context_ids.clear()
+        self._collapsed.clear()
         with self.prevent(Input.Changed):
             self.query_one("#search", Input).value = ""
         self.query_one(Inspector).display = False
@@ -2599,14 +2733,20 @@ class TaskApp(UpdateActions, NotesActions, App):
         matches = tm.view_tasks(tasks, self.view, day, project=self.project,
                                 query=self.search_query, tag=self.task_tag)
         kids = tm.child_index(tasks)
+        live_keys = {tm.fold_key(t) for t in tasks}
+        self._collapsed &= live_keys
         rows: list[Row] = []
-        for sec in tm.sections(matches, self.view, day):
+        for sec in tm.sections(matches, self.view, day, collapsed=self._collapsed):
             if rows:
                 rows.append(HeaderRow(sec.key, "", 0))   # breathing room
             rows.append(HeaderRow(sec.key, sec.title, sec.count))
             for node in sec.nodes:
+                closed_n, total = tm.progress_of(kids, node.task)
+                folded = None
+                if total:
+                    folded = tm.fold_key(node.task) in self._collapsed
                 rows.append(TaskRow(node.task, node.depth, node.prefix,
-                                    tm.progress_of(kids, node.task), node.task.context))
+                                    (closed_n, total), node.task.context, folded))
         self._context_ids = {t.id for t in matches if t.context}
         tl.day = day
         tl.view = self.view
@@ -3090,6 +3230,7 @@ class TaskApp(UpdateActions, NotesActions, App):
             ("clear_task_tag", "Clear task tag filter", "Esc", "Show all tags in the current view", "people tags reset all", bool(self.task_tag)),
             ("note", "Edit task note", "n", "Write context, links, or next steps", "notes details", has_task),
             ("add_sub", "Add subtask", "t", "Break the selected task into smaller steps", "child new", has_task),
+            ("toggle_fold", "Collapse or expand subtasks", "- / ← / →", "Hide or show the selected task's children in the list", "fold collapse expand tree hierarchy", has_task),
             ("focus_inspector", "Read task details", "→ / Alt+3", "Open and focus the inspector; scroll with the keyboard", "inspect note read", has_task),
             ("indent", "Indent task", "]", "Nest under the previous task", "child hierarchy", has_task),
             ("outdent", "Outdent task", "[", "Move up one level", "parent hierarchy", has_task),
@@ -3364,6 +3505,7 @@ class TaskApp(UpdateActions, NotesActions, App):
                 return
             with self._task_record(t, "Add subtask"):
                 nt = tm.add_subtask(self.vault, t, res["text"])
+            self._collapsed.discard(tm.fold_key(t))
             self._show_new_task(nt, self.project)
             self.announce(f"Added sub-task under {t.description or t.id}")
         self.push_screen(AddScreen(self.store.projects(), parent=t.description or t.id), self._guard(_done))
@@ -3449,11 +3591,16 @@ class TaskApp(UpdateActions, NotesActions, App):
         t = self._selected()
         if not t:
             return
+        sibs = [x for x in self.store.tasks
+                if x.file == t.file and x.lineno < t.lineno and x.depth == t.depth]
+        parent = sibs[-1] if sibs else None
         with self._task_record(t, "Indent task"):
             result = tm.indent_task(self.vault, t)
         if result is None:
             self.announce("Cannot indent — no previous task to nest under")
             return
+        if parent is not None:
+            self._collapsed.discard(tm.fold_key(parent))
         self.refresh_tasks(keep_id=t.id)
         self.announce("Nested under the previous task")
 
@@ -3469,6 +3616,49 @@ class TaskApp(UpdateActions, NotesActions, App):
             return
         self.refresh_tasks(keep_id=t.id)
         self.announce("Lifted one level")
+
+    def _fold_target(self) -> Task | None:
+        """Fold always follows the main list cursor, not an inspector child."""
+        return self.query_one(TaskList).current
+
+    def action_toggle_fold(self) -> None:
+        if self.view == "notes" or isinstance(self.screen, ModalScreen):
+            return
+        task = self._fold_target()
+        if task is None:
+            return
+        if not tm.children_of(self.store.tasks, task):
+            self.announce("No subtasks to fold")
+            return
+        key = tm.fold_key(task)
+        if key in self._collapsed:
+            self._collapsed.discard(key)
+            self.refresh_tasks(keep_id=task.id, reload=False)
+            self.announce("Expanded subtasks")
+        else:
+            self._collapsed.add(key)
+            self.refresh_tasks(keep_id=task.id, reload=False)
+            self.announce("Collapsed subtasks")
+
+    def action_collapse_fold(self) -> None:
+        task = self._fold_target()
+        if task is None or not tm.children_of(self.store.tasks, task):
+            return
+        key = tm.fold_key(task)
+        if key in self._collapsed:
+            return
+        self._collapsed.add(key)
+        self.refresh_tasks(keep_id=task.id, reload=False)
+
+    def action_expand_fold(self) -> None:
+        task = self._fold_target()
+        if task is None:
+            return
+        key = tm.fold_key(task)
+        if key not in self._collapsed:
+            return
+        self._collapsed.discard(key)
+        self.refresh_tasks(keep_id=task.id, reload=False)
 
     def action_due(self) -> None:
         self._edit_dates()

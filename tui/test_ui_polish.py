@@ -155,18 +155,26 @@ async def test_task_picker_titles_identify_the_target_and_github_result_stays_pr
 
 def test_light_theme_alias_and_semantic_contrast(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
-    assert appmod.resolve_theme("catppuccin-latte") == "taskman-light"
+    assert appmod.resolve_theme("catppuccin-latte") == "taskman-catppuccin-latte"
     assert not appmod.theme_is_dark("catppuccin-latte")
-    theme = appmod.LIGHT_THEME
-    assert not theme.dark
+    assert appmod.LIGHT_THEME is appmod.LIGHT_THEMES[0][0]
+    assert not appmod.LIGHT_THEME.dark
 
     def luminance(color):
         values = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
         linear = [c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in values]
         return sum(c * weight for c, weight in zip(linear, (.2126, .7152, .0722)))
 
-    for foreground in (theme.foreground, theme.warning, theme.error, theme.success,
-                       theme.variables["text-muted"], theme.variables["text-primary"]):
-        for background in (theme.background, theme.surface, theme.panel):
-            ratio = (luminance(background) + .05) / (luminance(foreground) + .05)
-            assert ratio >= 4.5, (foreground, background, ratio)
+    gruvbox = next(theme for theme, _label in appmod.LIGHT_THEMES if theme.name == "taskman-gruvbox-light")
+    assert gruvbox.surface == "#f2e5bc" and gruvbox.primary == "#076678"
+    assert gruvbox.accent == "#9a3203" and gruvbox.error == "#9d0006"
+    latte = next(theme for theme, _label in appmod.LIGHT_THEMES if theme.name == "taskman-catppuccin-latte")
+    assert latte.background == "#eff1f5" and latte.primary == "#1e66f5"
+    assert latte.surface == "#e6e9ef" and latte.panel == "#dce0e8"
+    for theme, _label in appmod.LIGHT_THEMES:
+        assert not theme.dark
+        for foreground in (theme.foreground, theme.warning, theme.error, theme.success,
+                           theme.variables["text-muted"], theme.variables["text-primary"]):
+            for background in (theme.background, theme.surface, theme.panel):
+                ratio = (luminance(background) + .05) / (luminance(foreground) + .05)
+                assert ratio >= 4.5, (theme.name, foreground, background, ratio)

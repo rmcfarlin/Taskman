@@ -918,10 +918,13 @@ class Section:
     key: str        # bucket id, e.g. "overdue"
     title: str      # human title, e.g. "Overdue"
     nodes: list[Node]
+    match_count: int | None = None  # when set (e.g. after folding), prefer this
 
     @property
     def count(self) -> int:
         """Real matches only — context ancestors do not count."""
+        if self.match_count is not None:
+            return self.match_count
         return sum(1 for n in self.nodes if not n.task.context)
 
 
@@ -974,6 +977,11 @@ def done_bucket(t: Task, day: dt.date) -> int:
     return 3
 
 
+def fold_key(task: Task) -> str:
+    """Stable id for session fold state: prefer the durable anchor."""
+    return task.anchor or task.id
+
+
 def tree_rows(rows: Iterable[Task]) -> list[list[Node]]:
     """Group displayed tasks into trees (one list of Nodes per root).
 
@@ -1013,6 +1021,24 @@ def tree_rows(rows: Iterable[Task]) -> list[list[Node]]:
     return trees
 
 
+def fold_tree(nodes: list[Node], collapsed: Iterable[str] | None = None) -> list[Node]:
+    """Drop descendants of collapsed parents; keep the parent row itself."""
+    folded = set(collapsed or ())
+    if not folded:
+        return nodes
+    out: list[Node] = []
+    hide_under: int | None = None
+    for node in nodes:
+        if hide_under is not None:
+            if node.depth > hide_under:
+                continue
+            hide_under = None
+        out.append(node)
+        if fold_key(node.task) in folded:
+            hide_under = node.depth
+    return out
+
+
 def _tree_sort_key(nodes: list[Node], closed: bool, now: bool = False) -> tuple:
     """Order trees inside a section: most urgent first (newest done first)."""
     real = [n.task for n in nodes if not n.task.context] or [nodes[0].task]
@@ -1030,7 +1056,8 @@ def _tree_sort_key(nodes: list[Node], closed: bool, now: bool = False) -> tuple:
 
 
 def sections(rows: Iterable[Task], view: str,
-             day: "dt.date | None" = None) -> list[Section]:
+             day: "dt.date | None" = None,
+             collapsed: Iterable[str] | None = None) -> list[Section]:
     """Lay out view rows as titled sections of task trees.
 
     Now buckets by missed deadline versus all other attention-worthy work.
@@ -1038,6 +1065,9 @@ def sections(rows: Iterable[Task], view: str,
     buckets by completion date. A tree lands in the most urgent bucket of
     any *matched* task it contains, so a sub-task due today under an
     undated parent still shows under Today (parent dimmed as context).
+
+    ``collapsed`` hides descendants in the displayed nodes; section counts
+    still include every matched task in the bucket.
     """
     day = today(day)
     closed = view == "completed"
@@ -1054,7 +1084,10 @@ def sections(rows: Iterable[Task], view: str,
         if not trees:
             continue
         trees.sort(key=lambda ns: _tree_sort_key(ns, closed, now))
-        out.append(Section(key, title, [n for ns in trees for n in ns]))
+        nodes = [n for ns in trees for n in fold_tree(ns, collapsed)]
+        out.append(Section(key, title, nodes,
+                           match_count=sum(1 for ns in trees for n in ns
+                                           if not n.task.context)))
     return out
 
 

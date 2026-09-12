@@ -6,7 +6,7 @@ A keyboard-first task and notes manager for folders of Markdown files. Open a fo
 
 ## Download and run
 
-**Windows:** download the `taskman-3.3.1-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.3.1), extract the entire archive, and run:
+**Windows:** download the `taskman-3.4.0-windows-x64.zip` asset from [GitHub Releases](https://github.com/rmcfarlin/Taskman/releases/tag/v3.4.0), extract the entire archive, and run:
 
 ```powershell
 .\taskman\taskman.exe
@@ -28,7 +28,7 @@ Linux and macOS builds use the same commands with `./taskman/taskman`. Download 
 
 ## Install from source
 
-Download and extract `taskman-3.3.1-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
+Download and extract `taskman-3.4.0-source.zip`, open a terminal in the extracted project, then run one command. This route needs **Python 3.10+** and internet access to install dependencies.
 
 Windows PowerShell:
 
@@ -73,7 +73,7 @@ Setup can create a new folder or fill in missing structure in an existing one. O
 
 ## Keyboard essentials
 
-The bottom shortcut bar shows common actions in up to two rows. **Ctrl+K More** opens the complete command list; **h** or **F1** opens the keyboard guide. Dialogs show their own controls. Dark Teal is the default theme; press **m** to preview the other themes, including Light and High contrast.
+The bottom shortcut bar shows common actions in up to two rows. **Ctrl+K More** opens the complete command list; **h** or **F1** opens the keyboard guide. Dialogs show their own controls. Dark Teal is the default theme; press **m** to preview the other themes — 13 dark, 3 light, and High contrast.
 
 Press **/** to open Find. It stays visible while a filter is active; **Enter** or **↓** returns to the results, and **Esc** clears the filter and closes Find.
 
@@ -93,6 +93,7 @@ Press **/** to open Find. It stays visible while a filter is active; **Enter** o
 | j / t / n | Project / subtask / note |
 | g / Ctrl+G | Edit task tags / filter tasks by tag |
 | i | Task details |
+| - or ← / → | Collapse / expand subtasks (arrows still move panes when nothing folds) |
 | u / Ctrl+Y | Undo / redo |
 | m / h | Theme / keyboard help |
 | Ctrl+S | Confirm saved state |

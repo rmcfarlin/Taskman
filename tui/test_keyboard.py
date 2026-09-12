@@ -391,3 +391,57 @@ def test_read_child_details_keeps_child_target_after_theme_preview(keyboard_vaul
             assert app.screen.query_one("#note-text", appmod.TextArea).text == ""
             await pilot.press("escape")
     asyncio.run(go())
+
+
+def test_subtasks_collapse_and_expand_from_the_task_list(keyboard_vault):
+    async def go():
+        app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
+        async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")
+            await pilot.pause()
+            tasks = app.query_one(appmod.TaskList)
+            assert tasks.current.description == "Parent task"
+            visible = [r.task.description for r in tasks.rows if isinstance(r, appmod.TaskRow)]
+            assert visible == ["Parent task", "Child one", "Child two", "Separate task"]
+            await pilot.press("minus")
+            await pilot.pause()
+            visible = [r.task.description for r in tasks.rows if isinstance(r, appmod.TaskRow)]
+            assert visible == ["Parent task", "Separate task"]
+            row = next(r for r in tasks.rows if isinstance(r, appmod.TaskRow) and r.task.description == "Parent task")
+            assert row.folded is True
+            await pilot.press("right")
+            await pilot.pause()
+            visible = [r.task.description for r in tasks.rows if isinstance(r, appmod.TaskRow)]
+            assert visible == ["Parent task", "Child one", "Child two", "Separate task"]
+            assert tasks.has_focus
+            await pilot.press("left")
+            await pilot.pause()
+            visible = [r.task.description for r in tasks.rows if isinstance(r, appmod.TaskRow)]
+            assert visible == ["Parent task", "Separate task"]
+            await pilot.press("left")
+            await pilot.pause()
+            assert app.query_one(appmod.Sidebar).has_focus
+    asyncio.run(go())
+
+
+def test_subtask_fold_marker_toggles_with_the_mouse(keyboard_vault):
+    async def go():
+        app = appmod.TaskApp(keyboard_vault, theme="taskman-teal")
+        async with app.run_test(notifications=True, size=(130, 30)) as pilot:
+            await pilot.press("1")
+            await pilot.pause()
+            tasks = app.query_one(appmod.TaskList)
+            assert tasks.current.description == "Parent task"
+            # Content column 9 is the fold marker; the section header row
+            # occupies content line 1, so the parent row is line 2.
+            inset_x = tasks.content_region.x - tasks.region.x
+            inset_y = tasks.content_region.y - tasks.region.y
+            await pilot.click(tasks, offset=(9 + inset_x, 2 + inset_y))
+            await pilot.pause()
+            visible = [r.task.description for r in tasks.rows if isinstance(r, appmod.TaskRow)]
+            assert visible == ["Parent task", "Separate task"]
+            await pilot.click(tasks, offset=(9 + inset_x, 2 + inset_y))
+            await pilot.pause()
+            visible = [r.task.description for r in tasks.rows if isinstance(r, appmod.TaskRow)]
+            assert visible == ["Parent task", "Child one", "Child two", "Separate task"]
+    asyncio.run(go())

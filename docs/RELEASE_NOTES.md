@@ -1,3 +1,13 @@
+# Taskman 3.4.0
+
+Fold long task lists and pick from seven new themes. Existing Markdown vaults need no migration.
+
+- Collapse a task's sub-tasks in the list with **-**; **←** collapses and **→** expands when there is something to fold, then still moves to the sidebar and inspector. The fold marker (`▾` expanded / `▸` collapsed) is clickable, and **Ctrl+K → Collapse or expand subtasks** does the same from the keyboard.
+- Folding is a session view, never an edit: hidden children stay in the Markdown file, section counts still include them, adding or indenting a sub-task expands its parent so the new child is visible, and opening another vault resets folds.
+- Added **Kanagawa**, **Gruvbox Dark**, **Catppuccin Mocha**, **Nord**, and an amber **Phosphor** CRT theme to the dark set.
+- Added **Gruvbox Light** and **Catppuccin Latte** light themes. A saved `catppuccin-latte` preference now selects the real Catppuccin Latte instead of the plain Light theme.
+- All light themes keep AA text contrast on every surface; every theme shows a swatch in the **m** picker and persists like before.
+
 # Taskman 3.3.1
 
 Keyboard-first polish on top of 3.3.0 tags. Existing Markdown vaults need no migration.

@@ -18,4 +18,4 @@ Primary modules:
     updater.py     GitHub release check and portable install helper
 """
 
-__version__ = "3.3.1"
+__version__ = "3.4.0"

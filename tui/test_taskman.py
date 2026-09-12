@@ -323,6 +323,17 @@ def test_add_task_joins_project_task_list(tmp_path):
         f"# Gamma\n\n## Tasks\n\n- [ ] Only #project/Gamma <!-- taskman:id={only.anchor} -->\n")
 
 
+def test_fold_tree_hides_descendants_and_keeps_section_counts(tmp_path):
+    tasks = tm.load_all(_tree_vault(tmp_path))
+    day = dt.date(2026, 9, 4)
+    parent = next(t for t in tasks if t.description == "Parent")
+    secs = tm.sections(tm.view_tasks(tasks, "all", day), "all", day,
+                       collapsed={tm.fold_key(parent)})
+    today = next(s for s in secs if s.key == "today")
+    assert [n.task.description for n in today.nodes] == ["Parent"]
+    assert today.count == 4
+
+
 def test_tree_rows_guides_and_order(tmp_path):
     tasks = tm.load_all(_tree_vault(tmp_path))
     trees = tm.tree_rows(tasks)

@@ -63,7 +63,7 @@ def test_resolve_theme_precedence(monkeypatch):
     assert appmod.resolve_theme("taskman-rcm") == "taskman-dark-teal"  # legacy preference
     assert appmod.resolve_theme(None) == "taskman-moss"               # then the saved file
     monkeypatch.setenv("TASKMAN_THEME", "catppuccin-latte")
-    assert appmod.resolve_theme(None) == "taskman-light"              # legacy Light migrates
+    assert appmod.resolve_theme(None) == "taskman-catppuccin-latte"  # saved Latte name maps to the port
     monkeypatch.setattr(appmod, "read_theme_file", lambda path=None: "bogus")
     monkeypatch.delenv("TASKMAN_THEME")
     assert appmod.resolve_theme(None) == appmod.DEFAULT_THEME        # invalid falls back
@@ -90,9 +90,12 @@ def test_curated_themes_valid(monkeypatch):
     assert appmod.DEFAULT_THEME in names and appmod.HIGH_CONTRAST in names
     assert len(names) == len(set(names))  # no duplicates
     dark = [n for n, _label, is_dark in appmod.THEMES if is_dark and n != appmod.HIGH_CONTRAST]
-    assert len(dark) == 8 and appmod.DEFAULT_THEME in dark
-    assert [label for _n, label, _d in appmod.THEMES][:8] == [
-        "Teal", "Ocean", "Ember", "Iris", "Moss", "Darcula", "One Dark", "Dark Teal"]
+    assert dark == [t.name for t, _label in appmod.DARK_THEMES]
+    assert appmod.DEFAULT_THEME in dark
+    assert [label for _n, label, _d in appmod.THEMES][:5] == [
+        "Teal", "Ocean", "Ember", "Iris", "Moss"]
+    assert [label for _n, label, dark in appmod.THEMES if not dark] == [
+        label for _t, label in appmod.LIGHT_THEMES]
     # Ports keep their signature colors.
     by_name = {t.name: t for t, _ in appmod.DARK_THEMES}
     assert by_name["taskman-darcula"].surface == "#2b2b2b" and by_name["taskman-darcula"].accent == "#cc7832"
@@ -101,15 +104,42 @@ def test_curated_themes_valid(monkeypatch):
     assert dark_teal.surface == "#2b2b2b" and dark_teal.foreground == "#ffffff"
     assert dark_teal.primary == "#244d4f" and dark_teal.success == "#4fa672"
     assert dark_teal.variables["block-cursor-foreground"] == "#ffffff"
+    kanagawa = by_name["taskman-kanagawa"]
+    assert kanagawa.surface == "#1f1f28" and kanagawa.primary == "#7e9cd8"
+    assert kanagawa.foreground == "#dcd7ba" and kanagawa.accent == "#957fb8"
+    gruvbox_dark = by_name["taskman-gruvbox-dark"]
+    assert gruvbox_dark.background == "#282828" and gruvbox_dark.primary == "#83a598"
+    assert gruvbox_dark.accent == "#fe8019" and gruvbox_dark.success == "#b8bb26"
+    mocha = by_name["taskman-catppuccin-mocha"]
+    assert mocha.background == "#181825" and mocha.primary == "#cba6f7"
+    assert mocha.foreground == "#cdd6f4" and mocha.error == "#f38ba8"
+    nord = by_name["taskman-nord"]
+    assert nord.background == "#2e3440" and nord.primary == "#5e81ac"
+    assert nord.variables["text-primary"] == "#88c0d0"
+    phosphor = by_name["taskman-phosphor"]
+    assert phosphor.background == "#0d0b06" and phosphor.primary == "#ffb000"
+    latte = next(t for t, _ in appmod.LIGHT_THEMES if t.name == "taskman-catppuccin-latte")
+    assert latte.background == "#eff1f5" and latte.primary == "#1e66f5"
     assert not appmod.theme_is_dark("catppuccin-latte")
+    assert not appmod.theme_is_dark("gruvbox-light")
+    assert appmod.theme_is_dark("catppuccin-mocha") and appmod.theme_is_dark("nord")
     assert "bold" in appmod.due_style_today("catppuccin-latte")  # light-safe, never bare yellow
+    assert "bold" in appmod.due_style_today("taskman-gruvbox-light")
     # Every dark theme is a real, registerable Theme with the cursor variables set.
     for theme, _label in appmod.DARK_THEMES:
         assert theme.dark and theme.variables["block-cursor-background"] == theme.primary
         assert theme.variables["block-cursor-foreground"] != theme.primary
         assert appmod.theme_swatch(theme.name).plain == "████"
+    for theme, _label in appmod.LIGHT_THEMES:
+        assert not theme.dark and appmod.theme_swatch(theme.name).plain == "████"
     assert appmod.theme_swatch("catppuccin-latte").plain == "████"
-    assert appmod.resolve_theme("nord") == appmod.DEFAULT_THEME       # not curated -> default
+    assert appmod.theme_swatch("kanagawa").plain == "████"
+    assert appmod.resolve_theme("kanagawa") == "taskman-kanagawa"
+    assert appmod.resolve_theme("gruvbox-light") == "taskman-gruvbox-light"
+    assert appmod.resolve_theme("gruvbox-dark") == "taskman-gruvbox-dark"
+    assert appmod.resolve_theme("catppuccin-mocha") == "taskman-catppuccin-mocha"
+    assert appmod.resolve_theme("nord") == "taskman-nord"
+    assert appmod.resolve_theme("solarized") == appmod.DEFAULT_THEME   # not curated -> default
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +467,32 @@ def test_explicit_theme_is_applied_at_startup(tmp_path, monkeypatch):
             await pilot.pause()
             assert app.theme == "taskman-ember"
             assert "Ember" in str(app.query_one("#clock").render())
+    _run(go())
+
+
+@pytest.mark.parametrize("name,label", [
+    ("taskman-kanagawa", "Kanagawa"),
+    ("taskman-gruvbox-light", "Gruvbox Light"),
+    ("taskman-gruvbox-dark", "Gruvbox Dark"),
+    ("taskman-catppuccin-mocha", "Catppuccin Mocha"),
+    ("taskman-catppuccin-latte", "Catppuccin Latte"),
+    ("taskman-nord", "Nord"),
+    ("taskman-phosphor", "Phosphor"),
+])
+def test_curated_theme_applies_at_startup(tmp_path, monkeypatch, name, label):
+    monkeypatch.delenv("TASKMAN_THEME", raising=False)
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(appmod, "read_theme_file", lambda path=None: "")
+    root = _vault(tmp_path)
+
+    async def go():
+        app = appmod.TaskApp(root, theme=name)
+        assert app.theme == name and app.theme_name == name
+        async with app.run_test(notifications=True, size=(100, 30)) as pilot:
+            await pilot.press("1")
+            await pilot.pause()
+            assert app.theme == name
+            assert label in str(app.query_one("#clock").render())
     _run(go())
 
 

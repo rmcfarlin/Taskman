@@ -41,6 +41,7 @@ TASK_SHORTCUTS = (
     Shortcut("s", "Status", "status"),
     Shortcut("j", "Project", "project"),
     Shortcut("t", "Subtask", "add_sub"),
+    Shortcut("-", "Fold", "toggle_fold"),
     Shortcut("n", "Note", "note"),
     Shortcut("8", "Notes", "notes"),
     Shortcut("l", "Link note", "link_reference"),
